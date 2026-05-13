@@ -10,15 +10,11 @@
 Slice 0 — Infrastructure Setup — ✅ complete
 
 ## What works right now
-- Docker Compose configuration with all services:
+- Docker Compose configuration with CBOP services only:
   - PostgreSQL database
   - n8n automation platform
-  - Outline wiki (SOPs)
-  - Nextcloud file storage
-  - Gitea git server
-  - Uptime Kuma monitoring
-  - Nginx Proxy Manager
   - CBOP app container
+  - (Note: Outline, Nextcloud, Gitea, Uptime Kuma, Nginx Proxy Manager, and OpenClaw already running on homeserver)
 - Next.js 14 project initialized with App Router
 - Hono.js API structure in /api directory
 - better-auth configured (lib/auth.ts)

@@ -10,11 +10,9 @@ const { Pool } = require('pg')
 const services = [
   { name: 'CBOP App', url: 'http://localhost:3003/api/health' },
   { name: 'n8n', url: 'http://localhost:5678' },
-  { name: 'Outline', url: 'http://localhost:3000' },
-  { name: 'Nextcloud', url: 'http://localhost:8080' },
-  { name: 'Gitea', url: 'http://localhost:3001' },
-  { name: 'Uptime Kuma', url: 'http://localhost:3002' },
-  { name: 'Nginx Proxy Manager', url: 'http://localhost:81' },
+  { name: 'OpenClaw', url: 'http://127.0.0.1:18789' },
+  // Note: Outline, Nextcloud, Gitea, Uptime Kuma, and Nginx Proxy Manager
+  // are already running on the homeserver - add their URLs here if needed
 ]
 
 async function checkHttp(name, url) {

@@ -57,10 +57,15 @@ cbop-v2/
 
 ### Prerequisites
 
-- Ubuntu 24.04 server (or similar Linux environment)
+- Ubuntu 24.04 homeserver with the following services already running:
+  - OpenClaw at `http://127.0.0.1:18789`
+  - Outline (SOPs)
+  - Nextcloud (file storage)
+  - Gitea (git server)
+  - Uptime Kuma (monitoring)
+  - Nginx Proxy Manager
 - Docker + Docker Compose installed
 - Node.js 18+ (for local development)
-- OpenClaw running at `http://127.0.0.1:18789` (or configure URL in .env)
 
 ### 1. Clone the repository
 
@@ -88,21 +93,18 @@ cp .env.example .env
 - `AWS_SECRET_ACCESS_KEY` - AWS secret key
 - `S3_BUCKET_NAME` - S3 bucket for backups
 
-### 3. Start all services
+### 3. Start CBOP services
 
 ```bash
 docker-compose up -d
 ```
 
 This starts:
-- PostgreSQL (port 5432)
-- n8n (port 5678)
-- Outline (port 3000)
-- Nextcloud (port 8080)
-- Gitea (port 3001)
-- Uptime Kuma (port 3002)
-- Nginx Proxy Manager (ports 80, 443, 81)
-- CBOP app (port 3003)
+- **PostgreSQL** (port 5432) - CBOP database
+- **n8n** (port 5678) - Automation platform
+- **CBOP app** (port 3003) - Main application
+
+**Note**: Outline, Nextcloud, Gitea, Uptime Kuma, Nginx Proxy Manager, and OpenClaw are already running on the homeserver and are not included in this docker-compose file.
 
 ### 4. Run database migrations
 
@@ -118,18 +120,15 @@ docker-compose exec postgres psql -U cbop_user -d cbop_v2 -f /docker-entrypoint-
 
 - **CBOP**: http://localhost:3003
 - **n8n**: http://localhost:5678
-- **Outline**: http://localhost:3000
-- **Nextcloud**: http://localhost:8080
-- **Gitea**: http://localhost:3001
-- **Uptime Kuma**: http://localhost:3002
-- **Nginx Proxy Manager**: http://localhost:81
+- **PostgreSQL**: localhost:5432
 
-### 6. Configure Nginx Proxy Manager (optional)
-
-1. Access Nginx Proxy Manager at http://localhost:81
-2. Default credentials: `admin@example.com` / `changeme`
-3. Set up proxy hosts for all services with custom domains
-4. Configure SSL certificates (Let's Encrypt)
+Other services (already running on homeserver):
+- **OpenClaw**: http://127.0.0.1:18789
+- **Outline**: (check your homeserver configuration)
+- **Nextcloud**: (check your homeserver configuration)
+- **Gitea**: (check your homeserver configuration)
+- **Uptime Kuma**: (check your homeserver configuration)
+- **Nginx Proxy Manager**: (check your homeserver configuration)
 
 ## Development
 

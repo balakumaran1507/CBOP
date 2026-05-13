@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --topbar: #232F3E;
+  --sidebar: #16191F;
+  --bg: #F2F3F3;
+  --card: #FFFFFF;
+  --border: #D5DBDB;
+  --text1: #16191F;
+  --text2: #687078;
+  --text3: #AAB5BB;
+  --amber: #E8820C;
+  --green: #1D8102;
+  --red: #D13212;
+  --blue: #0073BB;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text1);
+  font-family: var(--font-inter), sans-serif;
+}
+
+/* Headings use Syne */
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Syne', sans-serif;
+}
+
+/* Numbers and amounts use IBM Plex Mono */
+.font-mono {
+  font-family: var(--font-ibm-plex-mono), monospace;
+}

@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: cbop-postgres
+    environment:
+      POSTGRES_DB: cbop_v2
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    networks:
+      - cbop-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d cbop_v2"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # n8n Automation Platform
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: cbop-n8n
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD}
+      - N8N_HOST=${N8N_HOST}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=${N8N_WEBHOOK_URL}
+      - GENERIC_TIMEZONE=${TIMEZONE}
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${N8N_DB_NAME}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows
+    ports:
+      - "5678:5678"
+    networks:
+      - cbop-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # CBOP Application (Next.js + Hono.js)
+  cbop-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cbop-app
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/cbop_v2
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+      - OPENCLAW_URL=${OPENCLAW_URL}
+      - OPENCLAW_API_KEY=${OPENCLAW_API_KEY}
+      - OUTLINE_URL=${OUTLINE_URL}
+      - OUTLINE_API_TOKEN=${OUTLINE_API_TOKEN}
+      - N8N_WEBHOOK_SECRET=${N8N_WEBHOOK_SECRET}
+      - N8N_URL=http://n8n:5678
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
+      - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN}
+    ports:
+      - "3003:3000"
+    networks:
+      - cbop-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  n8n_data:
+
+networks:
+  cbop-network:
+    driver: bridge

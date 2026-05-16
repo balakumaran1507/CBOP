@@ -1,0 +1,149 @@
+{
+  "name": "reporting",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "rep-node-01",
+      "name": "Monday 9AM Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_jobs (name, type, status, started_at, payload) VALUES ('reporting', 'automation', 'running', NOW(), '{}'::jsonb) RETURNING id",
+        "options": {}
+      },
+      "id": "rep-node-02",
+      "name": "Log Job Start",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT co.name AS company_name, COUNT(DISTINCT d.id) FILTER (WHERE d.stage = 'closed_won' AND d.closed_at >= NOW() - INTERVAL '7 days') AS deals_closed, COUNT(DISTINCT i.id) FILTER (WHERE i.created_at >= NOW() - INTERVAL '7 days') AS invoices_sent, COALESCE(SUM(i.total) FILTER (WHERE i.status = 'paid' AND i.paid_at >= NOW() - INTERVAL '7 days'), 0) AS revenue_this_week, COUNT(DISTINCT t.id) FILTER (WHERE t.status = 'done' AND t.created_at >= NOW() - INTERVAL '7 days') AS tasks_completed FROM companies co LEFT JOIN sales_deals d ON d.company_id = co.id LEFT JOIN sales_invoices i ON i.company_id = co.id LEFT JOIN ops_tasks t ON t.company_id = co.id GROUP BY co.id, co.name ORDER BY co.name",
+        "options": {}
+      },
+      "id": "rep-node-03",
+      "name": "Fetch Weekly Summary",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [720, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const rows = $input.all();\nconst summary = rows.map(r => r.json);\n\nconst totalRevenue = summary.reduce((s, r) => s + Number(r.revenue_this_week || 0), 0);\nconst totalDeals = summary.reduce((s, r) => s + Number(r.deals_closed || 0), 0);\nconst totalInvoices = summary.reduce((s, r) => s + Number(r.invoices_sent || 0), 0);\nconst totalTasks = summary.reduce((s, r) => s + Number(r.tasks_completed || 0), 0);\n\nconst weeklyContext = {\n  week_ending: new Date().toISOString().split('T')[0],\n  total_revenue: totalRevenue,\n  total_deals_closed: totalDeals,\n  total_invoices_sent: totalInvoices,\n  total_tasks_completed: totalTasks,\n  by_company: summary\n};\n\nreturn [{ json: weeklyContext }];"
+      },
+      "id": "rep-node-04",
+      "name": "Aggregate Weekly Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:18789/agent",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ agent: 'morning_briefing', context: $json }) }}",
+        "options": {}
+      },
+      "id": "rep-node-05",
+      "name": "Trigger Morning Briefing Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:18789/send",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: 'telegram', to: '6316112708', message: `[CBOP Weekly Report] Week ending ${$('Aggregate Weekly Stats').first().json.week_ending}\\n\\nRevenue: ₹${Number($('Aggregate Weekly Stats').first().json.total_revenue).toLocaleString('en-IN')}\\nDeals closed: ${$('Aggregate Weekly Stats').first().json.total_deals_closed}\\nInvoices sent: ${$('Aggregate Weekly Stats').first().json.total_invoices_sent}\\nTasks done: ${$('Aggregate Weekly Stats').first().json.total_tasks_completed}\\n\\nFull briefing via morning_briefing agent.` }) }}",
+        "options": {}
+      },
+      "id": "rep-node-06",
+      "name": "Send Summary to Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE system_jobs SET status = 'done', completed_at = NOW(), result = '{\"report_sent\": true}'::jsonb WHERE name = 'reporting' AND status = 'running' AND started_at > NOW() - INTERVAL '1 hour'",
+        "options": {}
+      },
+      "id": "rep-node-07",
+      "name": "Log Job Done",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1680, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Monday 9AM Trigger": {
+      "main": [[{"node": "Log Job Start", "type": "main", "index": 0}]]
+    },
+    "Log Job Start": {
+      "main": [[{"node": "Fetch Weekly Summary", "type": "main", "index": 0}]]
+    },
+    "Fetch Weekly Summary": {
+      "main": [[{"node": "Aggregate Weekly Stats", "type": "main", "index": 0}]]
+    },
+    "Aggregate Weekly Stats": {
+      "main": [[{"node": "Trigger Morning Briefing Agent", "type": "main", "index": 0}]]
+    },
+    "Trigger Morning Briefing Agent": {
+      "main": [[{"node": "Send Summary to Telegram", "type": "main", "index": 0}]]
+    },
+    "Send Summary to Telegram": {
+      "main": [[{"node": "Log Job Done", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "slice-11",
+  "id": "cbop-reporting",
+  "tags": [{"id": "cbop", "name": "cbop"}]
+}

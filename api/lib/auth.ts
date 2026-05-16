@@ -3,16 +3,16 @@ import { pool } from './db'
 
 export const auth = betterAuth({
   database: pool,
-  emailAndPassword: {
-    enabled: true,
-  },
+  emailAndPassword: { enabled: true },
   session: {
     cookieName: 'cbop_session',
-    expiresIn: 60 * 60 * 24 * 7, // 7 days in seconds
+    expiresIn: 60 * 60 * 24 * 7,
   },
-  secret: process.env.BETTER_AUTH_SECRET || '',
-  // Additional configuration will be added in Slice 1
+  secret: process.env.BETTER_AUTH_SECRET || 'dev-secret-change-in-prod',
+  baseURL: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3003',
+  trustedOrigins: [
+    process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3003',
+  ],
 })
 
 export type Session = typeof auth.$Infer.Session
-export type User = typeof auth.$Infer.User

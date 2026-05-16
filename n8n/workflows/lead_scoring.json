@@ -1,0 +1,117 @@
+{
+  "name": "lead_scoring",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "lead-updated",
+        "responseMode": "onReceived",
+        "responseCode": 200,
+        "options": {}
+      },
+      "id": "ls-node-01",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "cbop-lead-updated"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT l.id, l.name, l.email, l.phone, l.source, l.status, l.score, l.badge, l.last_contact_at, l.company_id, l.owner_id, u.telegram_chat_id AS owner_telegram FROM sales_leads l LEFT JOIN users u ON u.id = l.owner_id WHERE l.id = $1",
+        "options": {
+          "queryReplacement": "={{ $json.body.lead_id }}"
+        }
+      },
+      "id": "ls-node-02",
+      "name": "Fetch Lead",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const lead = $input.first().json;\nconst now = new Date();\nconst lastContact = lead.last_contact_at ? new Date(lead.last_contact_at) : null;\nconst daysSinceContact = lastContact\n  ? Math.floor((now - lastContact) / 86400000)\n  : 999;\n\nlet score = 0;\nif (daysSinceContact <= 3) score += 20;\nif (lead.source === 'referral') score += 15;\nelse if (lead.source === 'inbound') score += 10;\nif (lead.email) score += 5;\nif (lead.phone) score += 5;\nif (lead.status === 'contacted') score += 10;\nelse if (lead.status === 'proposal_sent') score += 20;\n\nconst badge = score >= 70 ? 'hot' : score >= 40 ? 'warm' : 'cold';\n\nreturn [{ json: { ...lead, score, badge } }];"
+      },
+      "id": "ls-node-03",
+      "name": "Compute Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sales_leads SET score = $1, badge = $2 WHERE id = $3",
+        "options": {
+          "queryReplacement": "={{ $json.score + ',' + $json.badge + ',' + $json.id }}"
+        }
+      },
+      "id": "ls-node-04",
+      "name": "Update Lead Score",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [960, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://cbop-app:3000/webhooks/lead-updated",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ lead_id: $('Compute Score').first().json.id }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ls-node-05",
+      "name": "Notify CBOP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 300]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [[{"node": "Fetch Lead", "type": "main", "index": 0}]]
+    },
+    "Fetch Lead": {
+      "main": [[{"node": "Compute Score", "type": "main", "index": 0}]]
+    },
+    "Compute Score": {
+      "main": [[{"node": "Update Lead Score", "type": "main", "index": 0}]]
+    },
+    "Update Lead Score": {
+      "main": [[{"node": "Notify CBOP", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "slice-11",
+  "id": "cbop-lead-scoring",
+  "tags": [{"id": "cbop", "name": "cbop"}]
+}

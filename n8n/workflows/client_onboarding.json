@@ -1,0 +1,208 @@
+{
+  "name": "client_onboarding",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "client-created",
+        "responseMode": "onReceived",
+        "responseCode": 200,
+        "options": {}
+      },
+      "id": "co-node-01",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "cbop-client-created"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT c.id, c.name, c.email, c.org_name, c.company_id, co.name AS company_name FROM sales_clients c JOIN companies co ON co.id = c.company_id WHERE c.id = $1",
+        "options": {
+          "queryReplacement": "={{ $json.body.client_id }}"
+        }
+      },
+      "id": "co-node-02",
+      "name": "Fetch Client",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, service_type, task_title, default_owner_role, days_offset FROM ops_task_templates WHERE service_type = $1 ORDER BY days_offset ASC NULLS LAST",
+        "options": {
+          "queryReplacement": "={{ $('Webhook').first().json.body.service_type }}"
+        }
+      },
+      "id": "co-node-03",
+      "name": "Fetch Task Templates",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 480],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT u.id FROM users u JOIN user_companies uc ON uc.user_id = u.id WHERE u.role = 'coo' AND uc.company_id = $1 LIMIT 1",
+        "options": {
+          "queryReplacement": "={{ $('Fetch Client').first().json.company_id }}"
+        }
+      },
+      "id": "co-node-04",
+      "name": "Find Default Owner",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [720, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ops_projects (company_id, name, owner_id, status, description) VALUES ($1, $2, $3, 'active', $4) RETURNING id, company_id, owner_id",
+        "options": {
+          "queryReplacement": "={{ $('Fetch Client').first().json.company_id + ',Onboarding: ' + $('Fetch Client').first().json.name + ',' + $('Find Default Owner').first().json.id + ',Auto-created by client_onboarding workflow for deal ' + $('Webhook').first().json.body.deal_id }}"
+        }
+      },
+      "id": "co-node-05",
+      "name": "Create Onboarding Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [960, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const templates = $('Fetch Task Templates').all();\nconst project = $('Create Onboarding Project').first().json;\nconst companyId = project.company_id;\nconst projectId = project.id;\nconst ownerId = project.owner_id;\n\nif (!templates.length) return [];\n\nconst valueSets = templates.map((t, i) => {\n  const tmpl = t.json;\n  const due = tmpl.days_offset !== null\n    ? `NOW() + INTERVAL '${parseInt(tmpl.days_offset)} days'`\n    : 'NULL';\n  return `('${companyId}', '${projectId}', '${tmpl.task_title.replace(/'/g, \"''\")}', '${ownerId}', 'todo', 'medium', ${due})`;\n});\n\nconst sql = `INSERT INTO ops_tasks (company_id, project_id, title, owner_id, status, priority, due_date) VALUES ${valueSets.join(', ')}`;\n\nreturn [{ json: { sql, task_count: templates.length } }];"
+      },
+      "id": "co-node-06",
+      "name": "Build Task Insert SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql }}",
+        "options": {}
+      },
+      "id": "co-node-07",
+      "name": "Insert Tasks",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1440, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:18789/send",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: 'email', to: $('Fetch Client').first().json.email, template: 'client_onboarding_email', vars: { client_name: $('Fetch Client').first().json.name, company_name: $('Fetch Client').first().json.company_name, org_name: $('Fetch Client').first().json.org_name || '' } }) }}",
+        "options": {}
+      },
+      "id": "co-node-08",
+      "name": "Send Onboarding Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://cbop-app:3000/webhooks/client-created",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ client_id: $('Webhook').first().json.body.client_id, service_type: $('Webhook').first().json.body.service_type, deal_id: $('Webhook').first().json.body.deal_id }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "co-node-09",
+      "name": "Notify CBOP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1920, 300]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {"node": "Fetch Client", "type": "main", "index": 0},
+          {"node": "Fetch Task Templates", "type": "main", "index": 0}
+        ]
+      ]
+    },
+    "Fetch Client": {
+      "main": [[{"node": "Find Default Owner", "type": "main", "index": 0}]]
+    },
+    "Fetch Task Templates": {
+      "main": [[{"node": "Find Default Owner", "type": "main", "index": 0}]]
+    },
+    "Find Default Owner": {
+      "main": [[{"node": "Create Onboarding Project", "type": "main", "index": 0}]]
+    },
+    "Create Onboarding Project": {
+      "main": [[{"node": "Build Task Insert SQL", "type": "main", "index": 0}]]
+    },
+    "Build Task Insert SQL": {
+      "main": [[{"node": "Insert Tasks", "type": "main", "index": 0}]]
+    },
+    "Insert Tasks": {
+      "main": [[{"node": "Send Onboarding Email", "type": "main", "index": 0}]]
+    },
+    "Send Onboarding Email": {
+      "main": [[{"node": "Notify CBOP", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "slice-11",
+  "id": "cbop-client-onboarding",
+  "tags": [{"id": "cbop", "name": "cbop"}]
+}

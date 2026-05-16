@@ -1,0 +1,205 @@
+{
+  "name": "follow_ups",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "fu-node-01",
+      "name": "Daily 9AM Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_jobs (name, type, status, started_at, payload) VALUES ('follow_ups', 'automation', 'running', NOW(), '{}'::jsonb) RETURNING id",
+        "options": {}
+      },
+      "id": "fu-node-02",
+      "name": "Log Job Start",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT i.id, i.invoice_no, i.total, i.due_date, c.name AS client_name, c.phone AS client_phone, i.company_id FROM sales_invoices i JOIN sales_clients c ON c.id = i.client_id WHERE i.status IN ('sent', 'overdue') AND i.due_date < CURRENT_DATE - INTERVAL '7 days' AND c.phone IS NOT NULL ORDER BY i.due_date ASC",
+        "options": {}
+      },
+      "id": "fu-node-03",
+      "name": "Fetch Overdue Invoices",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [720, 180],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:18789/send",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: 'whatsapp', to: $json.client_phone, template: 'invoice_reminder', vars: { client_name: $json.client_name, invoice_no: $json.invoice_no, amount: String($json.total), due_date: $json.due_date } }) }}",
+        "options": {}
+      },
+      "id": "fu-node-04",
+      "name": "Send WhatsApp Invoice Reminder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 180]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO notifications_sent (channel, message, sent_at) VALUES ('whatsapp', $1, NOW())",
+        "options": {
+          "queryReplacement": "={{ 'Invoice reminder sent to ' + $json.client_phone + ' for ' + $json.invoice_no }}"
+        }
+      },
+      "id": "fu-node-05",
+      "name": "Log Invoice Notification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1200, 180],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT l.id, l.name, l.status, l.last_contact_at, EXTRACT(DAY FROM NOW() - l.last_contact_at)::int AS days_since_contact, u.telegram_chat_id AS owner_telegram, u.name AS owner_name FROM sales_leads l JOIN users u ON u.id = l.owner_id WHERE l.last_contact_at < NOW() - INTERVAL '3 days' AND l.status NOT IN ('converted', 'closed') AND u.telegram_chat_id IS NOT NULL ORDER BY l.last_contact_at ASC",
+        "options": {}
+      },
+      "id": "fu-node-06",
+      "name": "Fetch Stale Leads",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [720, 420],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:18789/send",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: 'telegram', to: $json.owner_telegram, message: `[CBOP] Follow up with ${$json.name} — ${$json.days_since_contact} days since last contact. Status: ${$json.status}` }) }}",
+        "options": {}
+      },
+      "id": "fu-node-07",
+      "name": "Send Telegram Lead Nudge",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 420]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO notifications_sent (channel, message, sent_at) VALUES ('telegram', $1, NOW())",
+        "options": {
+          "queryReplacement": "={{ 'Lead nudge sent for ' + $json.name + ' to ' + $json.owner_name }}"
+        }
+      },
+      "id": "fu-node-08",
+      "name": "Log Lead Notification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1200, 420],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE system_jobs SET status = 'done', completed_at = NOW(), result = '{\"invoices_reminded\": true, \"leads_nudged\": true}'::jsonb WHERE name = 'follow_ups' AND status = 'running' AND started_at > NOW() - INTERVAL '1 hour'",
+        "options": {}
+      },
+      "id": "fu-node-09",
+      "name": "Log Job Done",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1440, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily 9AM Trigger": {
+      "main": [[{"node": "Log Job Start", "type": "main", "index": 0}]]
+    },
+    "Log Job Start": {
+      "main": [
+        [
+          {"node": "Fetch Overdue Invoices", "type": "main", "index": 0},
+          {"node": "Fetch Stale Leads", "type": "main", "index": 0}
+        ]
+      ]
+    },
+    "Fetch Overdue Invoices": {
+      "main": [[{"node": "Send WhatsApp Invoice Reminder", "type": "main", "index": 0}]]
+    },
+    "Send WhatsApp Invoice Reminder": {
+      "main": [[{"node": "Log Invoice Notification", "type": "main", "index": 0}]]
+    },
+    "Log Invoice Notification": {
+      "main": [[{"node": "Log Job Done", "type": "main", "index": 0}]]
+    },
+    "Fetch Stale Leads": {
+      "main": [[{"node": "Send Telegram Lead Nudge", "type": "main", "index": 0}]]
+    },
+    "Send Telegram Lead Nudge": {
+      "main": [[{"node": "Log Lead Notification", "type": "main", "index": 0}]]
+    },
+    "Log Lead Notification": {
+      "main": [[{"node": "Log Job Done", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "slice-11",
+  "id": "cbop-follow-ups",
+  "tags": [{"id": "cbop", "name": "cbop"}]
+}

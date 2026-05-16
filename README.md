@@ -159,6 +159,63 @@ npm run build
 npm start
 ```
 
+## n8n Workflow Setup (Slice 11)
+
+Six workflow JSON files are in `n8n/workflows/`. Import them into n8n after starting the stack.
+
+### Step 1 — Create the Postgres credential in n8n
+
+1. Open n8n at http://localhost:5678
+2. Go to **Settings → Credentials → Add Credential → PostgreSQL**
+3. Name it exactly **`CBOP Postgres`**
+4. Fill in:
+   - **Host**: `postgres` (Docker service name)
+   - **Port**: `5432`
+   - **Database**: `cbop_v2`
+   - **User** / **Password**: from your `.env`
+5. Test and save
+
+### Step 2 — Import each workflow
+
+```bash
+# Workflows are volume-mounted at /workflows inside the n8n container
+# Import via n8n UI: Settings → Import Workflow → Upload File
+# Or use the n8n CLI:
+
+docker exec cbop-n8n n8n import:workflow --input=/workflows/lead_scoring.json
+docker exec cbop-n8n n8n import:workflow --input=/workflows/client_onboarding.json
+docker exec cbop-n8n n8n import:workflow --input=/workflows/employee_onboarding.json
+docker exec cbop-n8n n8n import:workflow --input=/workflows/follow_ups.json
+docker exec cbop-n8n n8n import:workflow --input=/workflows/financial_calc.json
+docker exec cbop-n8n n8n import:workflow --input=/workflows/reporting.json
+```
+
+### Step 3 — Post-import configuration
+
+After importing, open each workflow in the n8n UI and:
+
+1. **All workflows**: Re-select the `CBOP Postgres` credential in each Postgres node (the imported credential ID won't match — just pick it from the dropdown)
+2. **`reporting`**: Replace `BALA_TELEGRAM_CHAT_ID` in the "Send Summary to Telegram" node with Bala's actual Telegram chat ID (from the `users` table)
+3. **Webhook-triggered workflows** (`lead_scoring`, `client_onboarding`, `employee_onboarding`): The webhook URLs are shown in n8n after activation — CBOP already fires to `{N8N_URL}/webhook/{path}` via `fireN8nWebhook()` in the route handlers
+4. **`N8N_WEBHOOK_SECRET`**: n8n sends this as `x-n8n-secret` header when calling CBOP back. Set it in n8n's environment variables or the `.env` file
+
+### Step 4 — Activate workflows
+
+Toggle each workflow to **Active** in the n8n UI. Cron-triggered workflows start firing automatically. Webhook-triggered workflows register their webhook URLs.
+
+### Workflow summary
+
+| File | Trigger | What it does |
+|---|---|---|
+| `lead_scoring` | Webhook (CBOP fires on lead update) | Scores lead 0–100, sets hot/warm/cold badge |
+| `client_onboarding` | Webhook (CBOP fires on client create) | Creates project + tasks from templates, sends onboarding email |
+| `employee_onboarding` | Webhook (CBOP fires on user create) | Creates onboarding tasks, sends Telegram welcome |
+| `follow_ups` | Cron: 9:00 AM daily | WhatsApp reminders for overdue invoices, Telegram nudges for stale leads |
+| `financial_calc` | Cron: Sunday 23:59 | Aggregates monthly P&L per company, upserts `finance_monthly_pl` |
+| `reporting` | Cron: Monday 9:00 AM | Weekly summary, triggers morning_briefing agent, Telegram report |
+
+---
+
 ## Database Migrations
 
 Migrations are in the `migrations/` directory. They run automatically when the PostgreSQL container starts (via `docker-entrypoint-initdb.d`).
@@ -235,18 +292,18 @@ docker-compose exec -T postgres psql -U cbop_user -d cbop_v2 < backup.sql
 
 CBOP is built in feature slices (vertical slices of functionality):
 
-- ✅ **Slice 0**: Infrastructure Setup (current)
-- **Slice 1**: Auth + Shell
-- **Slice 2**: Home Dashboard
-- **Slice 3**: Sales Pipeline
-- **Slice 4**: Invoices + PDF
-- **Slice 5**: Leads + Clients
-- **Slice 6**: Tasks + Projects
-- **Slice 7**: Work Sessions
-- **Slice 8**: Templates + PDF Export
-- **Slice 9**: CEO Panel
-- **Slice 10**: Settings + System Jobs
-- **Slice 11**: n8n Automations
+- ✅ **Slice 0**: Infrastructure Setup
+- ✅ **Slice 1**: Auth + Shell
+- ✅ **Slice 2**: Home Dashboard
+- ✅ **Slice 3**: Sales Pipeline
+- ✅ **Slice 4**: Invoices + PDF
+- ✅ **Slice 5**: Leads + Clients
+- ✅ **Slice 6**: Tasks + Projects
+- ✅ **Slice 7**: Work Sessions
+- ✅ **Slice 8**: Templates + PDF Export
+- ✅ **Slice 9**: CEO Panel
+- ✅ **Slice 10**: Settings + System Jobs
+- ✅ **Slice 11**: n8n Automations
 - **Slice 12**: OpenClaw Agents
 - **Slice 13**: Security Audit + Deploy
 

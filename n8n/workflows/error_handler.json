@@ -1,0 +1,67 @@
+{
+  "name": "error_handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "err-node-01",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_jobs (name, type, status, started_at, completed_at, payload, error) VALUES ('error_handler', 'automation', 'failed', NOW(), NOW(), $1::jsonb, $2) ON CONFLICT DO NOTHING",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify({ workflow: $workflow.name, execution_id: $execution.id }) }},={{ $json.error?.message || 'unknown error' }}"
+        }
+      },
+      "id": "err-node-02",
+      "name": "Log to system_jobs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:18789/send",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: 'telegram', to: '6316112708', message: `⚠️ [CBOP n8n Error]\\nWorkflow: ${$workflow.name}\\nExecution: ${$execution.id}\\nError: ${$json.error?.message || 'unknown'}\\nNode: ${$json.error?.node?.name || 'unknown'}\\n\\nCheck: http://localhost:5678/workflow/${$workflow.id}/executions/${$execution.id}` }) }}",
+        "options": {}
+      },
+      "id": "err-node-03",
+      "name": "Notify Bala on Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 300],
+      "continueOnFail": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Error Trigger": {
+      "main": [[{"node": "Log to system_jobs", "type": "main", "index": 0}]]
+    },
+    "Log to system_jobs": {
+      "main": [[{"node": "Notify Bala on Telegram", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "slice-11",
+  "id": "cbop-error-handler",
+  "tags": [{"id": "cbop", "name": "cbop"}]
+}

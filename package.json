@@ -8,8 +8,8 @@
     "build": "next build",
     "start": "next start -p 3003",
     "lint": "next lint",
-    "db:migrate": "node scripts/migrate.js",
-    "db:seed": "node scripts/seed.js",
+    "db:migrate": "node --env-file=.env scripts/migrate.js",
+    "db:seed": "node --env-file=.env scripts/seed.js",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {

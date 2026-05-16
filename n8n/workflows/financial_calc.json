@@ -1,0 +1,130 @@
+{
+  "name": "financial_calc",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "59 23 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "fc-node-01",
+      "name": "Sunday 23:59 Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_jobs (name, type, status, started_at, payload) VALUES ('financial_calc', 'automation', 'running', NOW(), '{}'::jsonb) RETURNING id",
+        "options": {}
+      },
+      "id": "fc-node-02",
+      "name": "Log Job Start",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT c.id AS company_id, c.name AS company_name, COALESCE(r.revenue, 0) AS revenue, COALESCE(e.expenses, 0) AS expenses, COALESCE(r.revenue, 0) - COALESCE(e.expenses, 0) AS profit, DATE_TRUNC('month', CURRENT_DATE)::date AS month FROM companies c LEFT JOIN ( SELECT company_id, SUM(total) AS revenue FROM sales_invoices WHERE status = 'paid' AND DATE_TRUNC('month', paid_at) = DATE_TRUNC('month', CURRENT_DATE) GROUP BY company_id ) r ON r.company_id = c.id LEFT JOIN ( SELECT company_id, SUM(amount) AS expenses FROM finance_expenses WHERE DATE_TRUNC('month', date::date) = DATE_TRUNC('month', CURRENT_DATE) GROUP BY company_id ) e ON e.company_id = c.id ORDER BY c.name",
+        "options": {}
+      },
+      "id": "fc-node-03",
+      "name": "Compute Monthly P&L",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [720, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const rows = $input.all();\n\nif (!rows.length) return [{ json: { sql: null } }];\n\nconst valueSets = rows.map(r => {\n  const d = r.json;\n  return `('${d.company_id}', '${d.month}', ${d.revenue}, ${d.expenses}, ${d.profit})`;\n}).join(', ');\n\nconst sql = `INSERT INTO finance_monthly_pl (company_id, month, revenue, expenses, profit)\n  VALUES ${valueSets}\n  ON CONFLICT (company_id, month) DO UPDATE SET\n    revenue = EXCLUDED.revenue,\n    expenses = EXCLUDED.expenses,\n    profit = EXCLUDED.profit,\n    updated_at = NOW()`;\n\nreturn [{ json: { sql } }];"
+      },
+      "id": "fc-node-04",
+      "name": "Build Upsert SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql }}",
+        "options": {}
+      },
+      "id": "fc-node-05",
+      "name": "Upsert Monthly P&L",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1200, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE system_jobs SET status = 'done', completed_at = NOW(), result = '{\"pl_updated\": true}'::jsonb WHERE name = 'financial_calc' AND status = 'running' AND started_at > NOW() - INTERVAL '1 hour'",
+        "options": {}
+      },
+      "id": "fc-node-06",
+      "name": "Log Job Done",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1440, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Sunday 23:59 Trigger": {
+      "main": [[{"node": "Log Job Start", "type": "main", "index": 0}]]
+    },
+    "Log Job Start": {
+      "main": [[{"node": "Compute Monthly P&L", "type": "main", "index": 0}]]
+    },
+    "Compute Monthly P&L": {
+      "main": [[{"node": "Build Upsert SQL", "type": "main", "index": 0}]]
+    },
+    "Build Upsert SQL": {
+      "main": [[{"node": "Upsert Monthly P&L", "type": "main", "index": 0}]]
+    },
+    "Upsert Monthly P&L": {
+      "main": [[{"node": "Log Job Done", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "slice-11",
+  "id": "cbop-financial-calc",
+  "tags": [{"id": "cbop", "name": "cbop"}]
+}

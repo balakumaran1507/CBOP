@@ -1,0 +1,206 @@
+{
+  "name": "employee_onboarding",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "user-created",
+        "responseMode": "onReceived",
+        "responseCode": 200,
+        "options": {}
+      },
+      "id": "eo-node-01",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "cbop-user-created"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT u.id, u.name, u.email, u.role, u.telegram_chat_id, uc.company_id FROM users u LEFT JOIN user_companies uc ON uc.user_id = u.id WHERE u.id = $1 LIMIT 1",
+        "options": {
+          "queryReplacement": "={{ $json.body.user_id }}"
+        }
+      },
+      "id": "eo-node-02",
+      "name": "Fetch User",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, task_title, default_owner_role, days_offset FROM ops_task_templates WHERE service_type = 'employee_onboarding' ORDER BY days_offset ASC NULLS LAST",
+        "options": {}
+      },
+      "id": "eo-node-03",
+      "name": "Fetch Onboarding Templates",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 480],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT u.id FROM users u JOIN user_companies uc ON uc.user_id = u.id WHERE u.role = 'coo' AND uc.company_id = $1 LIMIT 1",
+        "options": {
+          "queryReplacement": "={{ $('Fetch User').first().json.company_id }}"
+        }
+      },
+      "id": "eo-node-04",
+      "name": "Find COO Owner",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [720, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ops_projects (company_id, name, owner_id, status, description) VALUES ($1, $2, $3, 'active', $4) RETURNING id, company_id, owner_id",
+        "options": {
+          "queryReplacement": "={{ $('Fetch User').first().json.company_id + ',Employee Onboarding: ' + $('Fetch User').first().json.name + ',' + $('Find COO Owner').first().json.id + ',Auto-created by employee_onboarding workflow' }}"
+        }
+      },
+      "id": "eo-node-05",
+      "name": "Create Onboarding Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [960, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const templates = $('Fetch Onboarding Templates').all();\nconst project = $('Create Onboarding Project').first().json;\nconst user = $('Fetch User').first().json;\nconst companyId = project.company_id;\nconst projectId = project.id;\nconst ownerId = project.owner_id;\n\nif (!templates.length) return [{ json: { sql: null, task_count: 0 } }];\n\nconst valueSets = templates.map(t => {\n  const tmpl = t.json;\n  const due = tmpl.days_offset !== null\n    ? `NOW() + INTERVAL '${parseInt(tmpl.days_offset)} days'`\n    : 'NULL';\n  const assignee = tmpl.default_owner_role === 'new_user' ? user.id : ownerId;\n  return `('${companyId}', '${projectId}', '${tmpl.task_title.replace(/'/g, \"''\")}', '${assignee}', 'todo', 'medium', ${due})`;\n});\n\nconst sql = `INSERT INTO ops_tasks (company_id, project_id, title, owner_id, status, priority, due_date) VALUES ${valueSets.join(', ')}`;\n\nreturn [{ json: { sql, task_count: templates.length } }];"
+      },
+      "id": "eo-node-06",
+      "name": "Build Task Insert SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql }}",
+        "options": {}
+      },
+      "id": "eo-node-07",
+      "name": "Insert Onboarding Tasks",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1440, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:18789/send",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: 'telegram', to: $('Fetch User').first().json.telegram_chat_id, message: `Welcome to the team, ${$('Fetch User').first().json.name}! Your onboarding tasks have been created in CBOP. Check your dashboard to get started. Role: ${$('Fetch User').first().json.role.toUpperCase()}` }) }}",
+        "options": {}
+      },
+      "id": "eo-node-08",
+      "name": "Send Welcome Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://cbop-app:3000/webhooks/user-created",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ user_id: $('Webhook').first().json.body.user_id, role: $('Webhook').first().json.body.role }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "eo-node-09",
+      "name": "Notify CBOP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1920, 300]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {"node": "Fetch User", "type": "main", "index": 0},
+          {"node": "Fetch Onboarding Templates", "type": "main", "index": 0}
+        ]
+      ]
+    },
+    "Fetch User": {
+      "main": [[{"node": "Find COO Owner", "type": "main", "index": 0}]]
+    },
+    "Fetch Onboarding Templates": {
+      "main": [[{"node": "Find COO Owner", "type": "main", "index": 0}]]
+    },
+    "Find COO Owner": {
+      "main": [[{"node": "Create Onboarding Project", "type": "main", "index": 0}]]
+    },
+    "Create Onboarding Project": {
+      "main": [[{"node": "Build Task Insert SQL", "type": "main", "index": 0}]]
+    },
+    "Build Task Insert SQL": {
+      "main": [[{"node": "Insert Onboarding Tasks", "type": "main", "index": 0}]]
+    },
+    "Insert Onboarding Tasks": {
+      "main": [[{"node": "Send Welcome Telegram", "type": "main", "index": 0}]]
+    },
+    "Send Welcome Telegram": {
+      "main": [[{"node": "Notify CBOP", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "slice-11",
+  "id": "cbop-employee-onboarding",
+  "tags": [{"id": "cbop", "name": "cbop"}]
+}

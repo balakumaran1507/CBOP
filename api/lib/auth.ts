@@ -13,7 +13,12 @@ export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET || 'dev-secret-change-in-prod',
   baseURL: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3003',
   trustedOrigins: [
-    process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3003',
+    'http://localhost:3003',
+    'http://127.0.0.1:3003',
+    ...(process.env.NEXT_PUBLIC_APP_URL ? [process.env.NEXT_PUBLIC_APP_URL] : []),
+    ...(process.env.BETTER_AUTH_TRUSTED_ORIGINS
+      ? process.env.BETTER_AUTH_TRUSTED_ORIGINS.split(',').map(s => s.trim())
+      : []),
   ],
   plugins: [
     magicLink({

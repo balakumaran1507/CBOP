@@ -1,7 +1,7 @@
 # CBOP HANDOFF
 
 ## Last updated
-2026-05-17 — n8n onboarding workflows: email rerouted through CBOP internal endpoint
+2026-05-17 — Invoice PDF v3 template + migration 008
 
 ## Completed slices
 ✅ Slice 0 — Infrastructure Setup
@@ -99,6 +99,8 @@ All v2 features are complete and security-hardened.
 - `n8n/workflows/client_onboarding.json` — co-node-08: replaced OpenClaw /send (channel: email) with POST /api/internal/send-email; inline subject/text/html; header x-internal-secret
 - `n8n/workflows/employee_onboarding.json` — added eo-node-10 "Send Welcome Email" (POST /api/internal/send-email, x-internal-secret); chained before Telegram node; employee now receives welcome email + Telegram
 - `api/routes/internal.ts` — fixed header check: x-webhook-secret → x-internal-secret (matches workflow spec)
+- `api/lib/pdf-generator.ts` — Invoice PDF v3: replaced entire html template (clean Inter-only design, Balance Due in header, P.O. # row, compliance strip, discount column, seal in signature block); added po_number/discount_amount/balance_due to SELECT from sales_invoices; added company_address/company_seal to SELECT from companies; added discount + balanceDue computed values; added sealBase64 loading (same pattern as logo); initials sliced to 2 chars
+- `migrations/008_invoice_pdf_v3.sql` — NEW: adds po_number, discount_amount, balance_due to sales_invoices; adds address, company_seal to companies; backfills balance_due
 
 ## Failed attempts — do not retry
 - Mapping better-auth to our `users` table via `advanced.database` — v0.8 requires Kysely dialect.

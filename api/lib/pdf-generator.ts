@@ -85,14 +85,19 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
       i.reverse_charge,
       i.e_way_bill_no,
       i.machine_data,
+      i.po_number,
+      i.discount_amount,
+      i.balance_due,
 
-      c.name        AS company_name,
-      c.gstin       AS company_gstin,
-      c.pan_number  AS company_pan,
-      c.upi_id      AS company_upi,
-      c.bank_details AS bank_details,
-      c.logo_url    AS company_logo,
+      c.name          AS company_name,
+      c.gstin         AS company_gstin,
+      c.pan_number    AS company_pan,
+      c.upi_id        AS company_upi,
+      c.bank_details  AS bank_details,
+      c.logo_url      AS company_logo,
       c.invoice_terms AS invoice_terms,
+      c.address       AS company_address,
+      c.company_seal  AS company_seal,
       COALESCE(c.invoice_theme, '{"primary":"#2B6EF5","accent":"#1A56DB","onPrimary":"#FFFFFF"}') AS theme,
 
       cl.name       AS client_name,
@@ -127,6 +132,8 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   const qty           = parseFloat(String(inv.quantity || 1))
   const isPaid        = inv.status === 'paid'
   const isOverdue     = inv.status === 'overdue'
+  const discount      = parseFloat(String(inv.discount_amount || 0))
+  const balanceDue    = parseFloat(String(inv.balance_due || total))
 
   const fmt     = (n: number) => '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   const fmtDate = (d: any) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
@@ -143,11 +150,21 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
     } catch { logoBase64 = '' }
   }
 
+  let sealBase64 = ''
+  if (inv.company_seal) {
+    try {
+      const fs = await import('fs/promises')
+      const buf = await fs.readFile(inv.company_seal)
+      const ext = (inv.company_seal as string).split('.').pop()?.toLowerCase() || 'png'
+      sealBase64 = `data:image/${ext};base64,${buf.toString('base64')}`
+    } catch { sealBase64 = '' }
+  }
+
   const initials = (inv.company_name as string)
     .split(' ')
     .map((w: string) => w[0])
     .join('')
-    .slice(0, 3)
+    .slice(0, 2)
     .toUpperCase()
 
   // QR codes
@@ -168,670 +185,763 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
 <head>
 <meta charset="UTF-8">
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-  /* ── RESET ──────────────────────────────── */
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
-  /* ── PAGE SETUP ──────────────────────────── */
   @page {
     size: A4;
     margin: 0;
-    @bottom-left {
-      content: "${esc(inv.invoice_no)} · ${esc(inv.company_name)}";
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 7pt;
-      color: #888888;
-    }
     @bottom-center {
       content: "Page " counter(page) " of " counter(pages);
-      font-family: 'IBM Plex Mono', monospace;
+      font-family: 'Inter', sans-serif;
       font-size: 7pt;
-      color: #888888;
-    }
-    @bottom-right {
-      content: "Computer-generated tax invoice";
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 7pt;
-      color: #888888;
+      color: #AAAAAA;
     }
   }
 
   body {
     font-family: 'Inter', Arial, sans-serif;
-    font-size: 10pt;
-    color: #1A1A1A;
+    font-size: 9.5pt;
+    color: #2D2D2D;
     background: #FFFFFF;
+    padding: 36px 40px 48px 40px;
   }
 
-  /* ── LAYOUT ──────────────────────────────── */
-  .page-wrap { padding: 14mm 14mm 20mm 14mm; }
-
-  /* ── HEADER BLOCK ────────────────────────── */
+  /* ── HEADER ── */
   .header {
-    background: ${theme.primary};
-    padding: 0;
     display: flex;
-    align-items: stretch;
-    height: 80px;
-    margin: -14mm -14mm 0 -14mm;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 32px;
     page-break-inside: avoid;
   }
-  .header-logo {
-    width: 90px;
-    background: ${theme.accent};
+
+  .company-block {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  .logo-circle {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: ${theme.primary};
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
   }
-  .header-logo img {
-    max-height: 56px;
-    max-width: 72px;
+
+  .logo-circle img {
+    width: 36px;
+    height: 36px;
     object-fit: contain;
+    border-radius: 50%;
   }
-  .header-logo .initials {
-    font-family: 'Inter', sans-serif;
-    font-size: 22px;
+
+  .logo-circle .initials {
+    color: #FFFFFF;
+    font-size: 18pt;
     font-weight: 700;
-    color: ${theme.onPrimary};
-    letter-spacing: 0.05em;
+    letter-spacing: -0.02em;
   }
-  .header-company {
-    flex: 1;
-    padding: 12px 16px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-  }
-  .header-company .company-name {
-    font-family: 'Inter', sans-serif;
-    font-size: 15pt;
+
+  .company-info .company-name {
+    font-size: 13pt;
     font-weight: 700;
-    color: ${theme.onPrimary};
-    letter-spacing: 0.02em;
+    color: #1A1A1A;
+    line-height: 1.2;
   }
-  .header-company .company-sub {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 7.5pt;
-    color: ${theme.onPrimary};
-    opacity: 0.8;
-    margin-top: 2px;
-    letter-spacing: 0.04em;
+
+  .company-info .company-detail {
+    font-size: 8pt;
+    color: #777777;
+    margin-top: 3px;
+    line-height: 1.6;
   }
-  .header-title {
-    width: 160px;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    justify-content: center;
-    padding: 12px 18px;
-    flex-shrink: 0;
+
+  .invoice-title-block {
+    text-align: right;
   }
-  .header-title .invoice-word {
-    font-family: 'Inter', sans-serif;
+
+  .invoice-title-block .invoice-word {
     font-size: 22pt;
     font-weight: 700;
-    color: ${theme.onPrimary};
-    letter-spacing: 0.15em;
+    color: #1A1A1A;
+    letter-spacing: 0.06em;
     line-height: 1;
   }
-  ${isOverdue ? `.header-title::after {
-    content: "OVERDUE";
-    font-family: "IBM Plex Mono", monospace;
-    font-size: 7pt;
-    font-weight: 600;
-    color: #FFCC00;
-    letter-spacing: 0.2em;
-    margin-top: 4px;
-  }` : ''}
 
-  /* ── META ROW ────────────────────────────── */
-  .meta-row {
-    display: flex;
-    border-bottom: 2px solid ${theme.primary};
-    margin-top: 0;
-    background: #FAFAFA;
+  .invoice-title-block .invoice-number {
+    font-size: 9pt;
+    color: #777777;
+    margin-top: 4px;
   }
-  .meta-cell {
-    flex: 1;
-    padding: 8px 12px;
-    border-right: 1px solid #E0E0E0;
+
+  .invoice-title-block .balance-due-label {
+    font-size: 8pt;
+    color: #777777;
+    margin-top: 10px;
   }
-  .meta-cell:last-child { border-right: none; }
-  .meta-label {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 7pt;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: ${theme.primary};
-    font-weight: 600;
-  }
-  .meta-value {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 9.5pt;
-    font-weight: 600;
+
+  .invoice-title-block .balance-due-amount {
+    font-size: 18pt;
+    font-weight: 700;
     color: #1A1A1A;
     margin-top: 2px;
   }
 
-  /* ── PARTIES SECTION ─────────────────────── */
-  .parties {
+  /* ── DIVIDER ── */
+  .divider {
+    border: none;
+    border-top: 1.5px solid #E8E8E8;
+    margin: 0 0 24px 0;
+  }
+
+  /* ── BILL TO + INVOICE DETAILS ── */
+  .meta-section {
     display: flex;
-    margin-top: 12px;
-    gap: 16px;
+    justify-content: space-between;
+    margin-bottom: 20px;
     page-break-inside: avoid;
   }
-  .party-box {
+
+  .bill-to-block {
     flex: 1;
-    border: 1px solid #D0D0D0;
-    padding: 10px 12px;
   }
-  .party-label {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 7pt;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: ${theme.primary};
+
+  .block-label {
+    font-size: 7.5pt;
     font-weight: 600;
-    border-bottom: 1px solid #E0E0E0;
-    padding-bottom: 4px;
-    margin-bottom: 6px;
+    color: #AAAAAA;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 8px;
   }
-  .party-name {
+
+  .bill-to-name {
     font-size: 11pt;
     font-weight: 700;
     color: #1A1A1A;
-  }
-  .party-detail {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 8pt;
-    color: #444444;
-    margin-top: 2px;
-    line-height: 1.5;
-  }
-  .party-gstin {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 8pt;
-    font-weight: 600;
-    color: #1A1A1A;
-    margin-top: 4px;
-    background: #F0F0F0;
-    padding: 2px 6px;
-    display: inline-block;
+    margin-bottom: 3px;
   }
 
-  /* ── COMPLIANCE ROW ──────────────────────── */
-  .compliance-row {
-    background: #F5F5F5;
-    border: 1px solid #D0D0D0;
-    border-top: none;
-    padding: 5px 12px;
-    display: flex;
-    gap: 24px;
-    flex-wrap: wrap;
-  }
-  .compliance-item {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 7.5pt;
+  .bill-to-detail {
+    font-size: 8.5pt;
     color: #555555;
+    line-height: 1.65;
   }
-  .compliance-item strong {
-    color: #1A1A1A;
+
+  .bill-to-gstin {
+    display: inline-block;
+    font-size: 7.5pt;
+    font-weight: 600;
+    color: #444444;
+    background: #F5F5F5;
+    padding: 2px 8px;
+    margin-top: 5px;
+  }
+
+  .invoice-details-block {
+    width: 220px;
+    flex-shrink: 0;
+  }
+
+  .detail-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 5px;
+    font-size: 8.5pt;
+  }
+
+  .detail-label {
+    color: #999999;
+    font-weight: 400;
+  }
+
+  .detail-value {
+    color: #2D2D2D;
+    font-weight: 500;
+    text-align: right;
+  }
+
+  /* ── PLACE OF SUPPLY ── */
+  .place-of-supply {
+    font-size: 8.5pt;
+    color: #555555;
+    margin-bottom: 20px;
+  }
+
+  /* ── COMPLIANCE STRIP ── */
+  .compliance-strip {
+    display: flex;
+    gap: 20px;
+    background: #F8F8F8;
+    padding: 6px 12px;
+    margin-bottom: 20px;
+    font-size: 7.5pt;
+    color: #777777;
+  }
+
+  .compliance-strip span strong {
+    color: #2D2D2D;
     font-weight: 600;
   }
 
-  /* ── LINE ITEMS TABLE ────────────────────── */
-  .items-section { margin-top: 14px; }
-  .section-title {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 7pt;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: ${theme.primary};
-    font-weight: 600;
-    margin-bottom: 4px;
-  }
-
+  /* ── ITEMS TABLE ── */
   table.items {
     width: 100%;
     border-collapse: collapse;
-    font-size: 8.5pt;
+    margin-bottom: 0;
   }
+
   table.items thead {
     display: table-header-group;
   }
-  table.items thead tr {
-    background: ${theme.primary};
-    color: ${theme.onPrimary};
-    page-break-inside: avoid;
-  }
+
   table.items thead th {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 7pt;
+    background: ${theme.primary};
+    color: #FFFFFF;
+    font-size: 8pt;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    padding: 7px 8px;
-    border: 1px solid ${theme.accent};
+    letter-spacing: 0.06em;
+    padding: 9px 12px;
     text-align: right;
+    border: none;
   }
+
   table.items thead th:first-child,
   table.items thead th:nth-child(2) {
     text-align: left;
   }
+
   table.items tbody tr {
     page-break-inside: avoid;
-  }
-  table.items tbody tr:nth-child(even) {
-    background: #FAFAFA;
-  }
-  table.items tbody tr:nth-child(odd) {
-    background: #FFFFFF;
-  }
-  table.items tbody td {
-    padding: 8px 8px;
-    border: 1px solid #D0D0D0;
-    vertical-align: top;
-    line-height: 1.4;
-  }
-  table.items tbody td.num {
-    font-family: 'IBM Plex Mono', monospace;
-    text-align: right;
-    font-size: 8.5pt;
-  }
-  table.items tbody td.desc {
-    max-width: 200px;
-    word-wrap: break-word;
-  }
-  table.items tbody td.hsn {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 8pt;
-    text-align: center;
-    color: #555555;
+    border-bottom: 1px solid #F0F0F0;
   }
 
-  /* ── TOTALS BLOCK ────────────────────────── */
-  .totals-wrap {
+  table.items tbody tr:last-child {
+    border-bottom: 1.5px solid #E8E8E8;
+  }
+
+  table.items tbody td {
+    padding: 11px 12px;
+    vertical-align: top;
+    font-size: 9pt;
+  }
+
+  table.items tbody td.item-num {
+    color: #AAAAAA;
+    font-size: 8.5pt;
+    text-align: center;
+    width: 28px;
+  }
+
+  table.items tbody td.item-desc {
+    min-width: 200px;
+  }
+
+  table.items tbody td.item-desc .item-title {
+    font-weight: 600;
+    color: #1A1A1A;
+  }
+
+  table.items tbody td.item-desc .item-sub {
+    font-size: 8pt;
+    color: #888888;
+    margin-top: 2px;
+    font-style: italic;
+  }
+
+  table.items tbody td.item-num-right {
+    text-align: right;
+    font-size: 9pt;
+    color: #2D2D2D;
+  }
+
+  table.items tbody td.item-amount {
+    text-align: right;
+    font-weight: 600;
+    color: #1A1A1A;
+    font-size: 9pt;
+  }
+
+  table.items tbody td.tax-cell {
+    text-align: right;
+    font-size: 8.5pt;
+    color: #666666;
+  }
+
+  /* ── TOTALS ── */
+  .totals-section {
     display: flex;
     justify-content: flex-end;
     margin-top: 0;
     page-break-inside: avoid;
   }
-  table.totals {
-    width: 300px;
-    border-collapse: collapse;
-    font-size: 9pt;
-    border: 1px solid #D0D0D0;
-  }
-  table.totals td {
-    padding: 5px 10px;
-    border: 1px solid #D0D0D0;
-    font-family: 'IBM Plex Mono', monospace;
-  }
-  table.totals td.label { color: #444444; font-size: 8.5pt; }
-  table.totals td.value { text-align: right; font-weight: 600; color: #1A1A1A; }
-  table.totals tr.total-row {
-    background: ${theme.primary};
-    color: ${theme.onPrimary};
-  }
-  table.totals tr.total-row td {
-    font-size: 11pt;
-    font-weight: 700;
-    border-color: ${theme.accent};
-  }
-  table.totals tr.total-row td.value { color: ${theme.onPrimary}; }
 
-  /* ── AMOUNT IN WORDS ─────────────────────── */
-  .words-box {
-    border: 1px solid #D0D0D0;
-    border-top: 3px solid ${theme.primary};
-    padding: 8px 12px;
-    margin-top: 10px;
+  .totals-block {
+    width: 260px;
+    margin-top: 4px;
+  }
+
+  .total-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 5px 12px;
+    font-size: 9pt;
+  }
+
+  .total-row .t-label {
+    color: #777777;
+  }
+
+  .total-row .t-value {
+    font-weight: 500;
+    color: #2D2D2D;
+  }
+
+  .total-row.discount .t-label,
+  .total-row.discount .t-value {
+    color: #E05C2A;
+  }
+
+  .total-row.grand-total {
+    background: #1A1A1A;
+    margin-top: 4px;
+  }
+
+  .total-row.grand-total .t-label {
+    color: #FFFFFF;
+    font-weight: 700;
+    font-size: 10pt;
+  }
+
+  .total-row.grand-total .t-value {
+    color: #FFFFFF;
+    font-weight: 700;
+    font-size: 11pt;
+  }
+
+  .total-row.balance-due-row {
+    background: #F5F5F5;
+    margin-top: 2px;
+  }
+
+  .total-row.balance-due-row .t-label {
+    color: #1A1A1A;
+    font-weight: 700;
+  }
+
+  .total-row.balance-due-row .t-value {
+    color: #1A1A1A;
+    font-weight: 700;
+  }
+
+  /* ── WORDS + PAYMENT ── */
+  .bottom-section {
+    margin-top: 24px;
     page-break-inside: avoid;
   }
-  .words-label {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 7pt;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: ${theme.primary};
-    font-weight: 600;
-  }
-  .words-value {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 9.5pt;
-    font-weight: 600;
-    color: #1A1A1A;
-    margin-top: 3px;
+
+  .words-row {
+    font-size: 8.5pt;
+    color: #555555;
+    margin-bottom: 20px;
+    padding: 8px 12px;
+    background: #F8F8F8;
+    border-left: 3px solid ${theme.primary};
   }
 
-  /* ── PAYMENT + QR ────────────────────────── */
-  .payment-section {
-    margin-top: 14px;
+  .words-row strong {
+    color: #1A1A1A;
+    display: block;
+    margin-bottom: 2px;
+    font-size: 7.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #AAAAAA;
+    font-weight: 600;
+  }
+
+  .payment-row {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 20px;
+    align-items: flex-start;
+  }
+
+  .payment-details {
+    flex: 1;
+  }
+
+  .payment-details .block-label {
+    margin-bottom: 6px;
+  }
+
+  .payment-line {
+    font-size: 8.5pt;
+    color: #555555;
+    line-height: 1.8;
+  }
+
+  .payment-line strong {
+    color: #1A1A1A;
+    font-weight: 600;
+  }
+
+  .qr-group {
     display: flex;
     gap: 16px;
-    page-break-inside: avoid;
+    align-items: flex-end;
   }
-  .payment-box {
-    flex: 1;
-    border: 1px solid #D0D0D0;
-    padding: 10px 12px;
-  }
-  .payment-box .section-title { margin-bottom: 6px; }
-  .payment-line {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 8.5pt;
-    color: #333333;
-    line-height: 1.7;
-  }
-  .payment-line strong { color: #1A1A1A; font-weight: 600; }
-  .qr-block {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
-  }
-  .qr-item { text-align: center; }
-  .qr-item img { display: block; border: 1px solid #E0E0E0; }
-  .qr-caption {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 6.5pt;
-    color: #888888;
+
+  .qr-item {
     text-align: center;
-    margin-top: 2px;
+  }
+
+  .qr-item img {
+    display: block;
+    border: 1px solid #EEEEEE;
+  }
+
+  .qr-caption {
+    font-size: 6.5pt;
+    color: #AAAAAA;
+    text-align: center;
+    margin-top: 3px;
     text-transform: uppercase;
     letter-spacing: 0.08em;
   }
 
-  /* ── FOOTER SECTION ──────────────────────── */
-  .footer-section {
-    margin-top: 14px;
+  /* ── NOTES + TERMS + SIGNATURE ── */
+  .footer-row {
     display: flex;
-    gap: 16px;
+    gap: 24px;
+    margin-top: 4px;
     page-break-inside: avoid;
   }
-  .terms-box {
+
+  .notes-block {
     flex: 1;
-    border: 1px solid #D0D0D0;
-    padding: 10px 12px;
   }
-  .terms-text {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 7.5pt;
+
+  .notes-text {
+    font-size: 8.5pt;
     color: #555555;
-    line-height: 1.8;
+    line-height: 1.65;
+    margin-top: 4px;
+  }
+
+  .terms-block {
+    flex: 1;
+  }
+
+  .terms-text {
+    font-size: 8pt;
+    color: #777777;
+    line-height: 1.7;
+    margin-top: 4px;
     white-space: pre-line;
   }
-  .signature-box {
-    width: 200px;
-    border: 1px solid #D0D0D0;
-    padding: 10px 12px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
+
+  .signature-block {
+    width: 180px;
     flex-shrink: 0;
-  }
-  .signature-for {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 7.5pt;
-    color: #555555;
-  }
-  .signature-for strong { color: #1A1A1A; font-size: 8.5pt; }
-  .signature-line {
-    border-bottom: 1.5px solid #1A1A1A;
-    height: 50px;
-    margin: 8px 0 4px 0;
-  }
-  .signature-label {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 7.5pt;
-    color: #555555;
     text-align: center;
   }
 
-  /* ── PAID WATERMARK ──────────────────────── */
+  .signature-space {
+    height: 56px;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+  }
+
+  .signature-space img {
+    max-height: 52px;
+    max-width: 120px;
+    object-fit: contain;
+    opacity: 0.82;
+  }
+
+  .signature-line {
+    border-bottom: 1.5px solid #2D2D2D;
+    margin-bottom: 5px;
+  }
+
+  .signature-label {
+    font-size: 7.5pt;
+    color: #777777;
+    text-align: center;
+  }
+
+  .for-company {
+    font-size: 7.5pt;
+    color: #AAAAAA;
+    margin-bottom: 8px;
+  }
+
+  /* ── AUDIT FOOTER ── */
+  .audit-footer {
+    margin-top: 20px;
+    padding-top: 8px;
+    border-top: 1px solid #F0F0F0;
+    display: flex;
+    justify-content: space-between;
+    font-size: 6.5pt;
+    color: #CCCCCC;
+  }
+
+  /* ── PAID WATERMARK ── */
   ${isPaid ? `
-  .paid-watermark {
+  .paid-stamp {
     position: fixed;
-    top: 50%;
+    top: 42%;
     left: 50%;
-    transform: translate(-50%, -50%) rotate(-35deg);
-    font-family: 'Inter', sans-serif;
-    font-size: 72pt;
+    transform: translate(-50%, -50%) rotate(-28deg);
+    font-size: 64pt;
     font-weight: 900;
-    color: rgba(29, 129, 2, 0.10);
-    letter-spacing: 0.1em;
+    color: rgba(29, 129, 2, 0.08);
+    letter-spacing: 0.12em;
     pointer-events: none;
-    z-index: 0;
     white-space: nowrap;
   }` : ''}
 </style>
 </head>
 <body>
 
-${isPaid ? '<div class="paid-watermark">PAID</div>' : ''}
+${isPaid ? '<div class="paid-stamp">PAID</div>' : ''}
 
-<div class="page-wrap">
-
-  <!-- HEADER -->
-  <div class="header">
-    <div class="header-logo">
+<!-- ═══ HEADER ═══ -->
+<div class="header">
+  <div class="company-block">
+    <div class="logo-circle">
       ${logoBase64
         ? `<img src="${logoBase64}" alt="logo" />`
         : `<span class="initials">${initials}</span>`
       }
     </div>
-    <div class="header-company">
-      <div class="company-name">${esc(inv.company_name)}</div>
-      <div class="company-sub">GSTIN: ${esc(inv.company_gstin) || 'N/A'} &nbsp;|&nbsp; PAN: ${esc(inv.company_pan) || 'N/A'}</div>
-    </div>
-    <div class="header-title">
-      <div class="invoice-word">INVOICE</div>
-    </div>
-  </div>
-
-  <!-- META ROW -->
-  <div class="meta-row">
-    <div class="meta-cell">
-      <div class="meta-label">Invoice No</div>
-      <div class="meta-value">${esc(inv.invoice_no)}</div>
-    </div>
-    <div class="meta-cell">
-      <div class="meta-label">Invoice Date</div>
-      <div class="meta-value">${fmtDate(inv.invoice_date)}</div>
-    </div>
-    <div class="meta-cell">
-      <div class="meta-label">Supply Date</div>
-      <div class="meta-value">${fmtDate(inv.supply_date)}</div>
-    </div>
-    <div class="meta-cell">
-      <div class="meta-label">Due Date</div>
-      <div class="meta-value">${fmtDate(inv.due_date)}</div>
-    </div>
-    <div class="meta-cell">
-      <div class="meta-label">Status</div>
-      <div class="meta-value">${esc((inv.status as string).toUpperCase())}</div>
-    </div>
-  </div>
-
-  <!-- PARTIES -->
-  <div class="parties">
-    <div class="party-box">
-      <div class="party-label">Bill From (Supplier)</div>
-      <div class="party-name">${esc(inv.company_name)}</div>
-      ${inv.company_pan ? `<div class="party-detail">PAN: ${esc(inv.company_pan)}</div>` : ''}
-      ${inv.company_gstin ? `<span class="party-gstin">GSTIN: ${esc(inv.company_gstin)}</span>` : ''}
-    </div>
-    <div class="party-box">
-      <div class="party-label">Bill To (Recipient)</div>
-      <div class="party-name">${esc(inv.client_name)}</div>
-      ${inv.client_org ? `<div class="party-detail">${esc(inv.client_org)}</div>` : ''}
-      ${inv.client_address ? `<div class="party-detail">${esc(inv.client_address)}</div>` : ''}
-      ${inv.client_gstin ? `<span class="party-gstin">GSTIN: ${esc(inv.client_gstin)}</span>` : ''}
-      ${inv.client_email ? `<div class="party-detail">${esc(inv.client_email)}</div>` : ''}
-    </div>
-  </div>
-
-  <!-- COMPLIANCE ROW -->
-  <div class="compliance-row">
-    <span class="compliance-item">Place of Supply: <strong>${placeOfSupply}</strong></span>
-    <span class="compliance-item">Reverse Charge: <strong>${inv.reverse_charge ? 'Yes' : 'No'}</strong></span>
-    <span class="compliance-item">Tax is payable on reverse charge: <strong>No</strong></span>
-    ${inv.e_way_bill_no ? `<span class="compliance-item">E-Way Bill: <strong>${esc(inv.e_way_bill_no)}</strong></span>` : ''}
-    <span class="compliance-item">GST Type: <strong>${isCGST ? 'CGST + SGST' : 'IGST'}</strong></span>
-  </div>
-
-  <!-- LINE ITEMS TABLE -->
-  <div class="items-section">
-    <div class="section-title">Items &amp; Services</div>
-    <table class="items">
-      <thead>
-        <tr>
-          <th style="text-align:center;width:28px">#</th>
-          <th style="text-align:left;">Description</th>
-          <th style="text-align:center;">HSN/SAC</th>
-          <th>Qty</th>
-          <th>Rate</th>
-          <th>Taxable Amt</th>
-          ${isCGST ? `
-          <th>CGST%</th>
-          <th>CGST Amt</th>
-          <th>SGST%</th>
-          <th>SGST Amt</th>
-          ` : `
-          <th>IGST%</th>
-          <th>IGST Amt</th>
-          `}
-          <th>Amount</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td style="text-align:center;font-family:'IBM Plex Mono',monospace;font-size:8pt;">1</td>
-          <td class="desc">
-            <strong>${esc(inv.service_description) || 'Professional Services'}</strong>
-          </td>
-          <td class="hsn">${esc(inv.hsn_code) || '998314'}</td>
-          <td class="num">${qty.toFixed(2)}</td>
-          <td class="num">${fmt(rate)}</td>
-          <td class="num">${fmt(taxableAmount)}</td>
-          ${isCGST ? `
-          <td class="num">9%</td>
-          <td class="num">${fmt(cgst)}</td>
-          <td class="num">9%</td>
-          <td class="num">${fmt(sgst)}</td>
-          ` : `
-          <td class="num">18%</td>
-          <td class="num">${fmt(igst)}</td>
-          `}
-          <td class="num"><strong>${fmt(taxableAmount)}</strong></td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
-  <!-- TOTALS -->
-  <div class="totals-wrap">
-    <table class="totals">
-      <tr>
-        <td class="label">Subtotal</td>
-        <td class="value">${fmt(taxableAmount)}</td>
-      </tr>
-      ${isCGST ? `
-      <tr>
-        <td class="label">CGST @ 9%</td>
-        <td class="value">${fmt(cgst)}</td>
-      </tr>
-      <tr>
-        <td class="label">SGST @ 9%</td>
-        <td class="value">${fmt(sgst)}</td>
-      </tr>
-      ` : `
-      <tr>
-        <td class="label">IGST @ 18%</td>
-        <td class="value">${fmt(igst)}</td>
-      </tr>
-      `}
-      ${Math.abs(rounding) > 0.001 ? `
-      <tr>
-        <td class="label">Rounding</td>
-        <td class="value">${rounding > 0 ? '+' : ''}${fmt(rounding)}</td>
-      </tr>` : ''}
-      <tr class="total-row">
-        <td class="label" style="color:${theme.onPrimary};font-size:11pt;">TOTAL</td>
-        <td class="value" style="font-size:13pt;">${fmt(total)}</td>
-      </tr>
-    </table>
-  </div>
-
-  <!-- AMOUNT IN WORDS -->
-  <div class="words-box">
-    <div class="words-label">Amount in Words</div>
-    <div class="words-value">${amountInWords(total)}</div>
-  </div>
-
-  <!-- PAYMENT + QR -->
-  <div class="payment-section">
-    <div class="payment-box">
-      <div class="section-title">Payment Details</div>
-      ${bank ? `
-      <div class="payment-line">Bank: <strong>${esc(bank.bank_name)}</strong></div>
-      <div class="payment-line">A/C Name: <strong>${esc(bank.account_name)}</strong></div>
-      <div class="payment-line">A/C No: <strong>${esc(bank.account_no)}</strong></div>
-      <div class="payment-line">A/C Type: <strong>${esc(bank.account_type)}</strong></div>
-      <div class="payment-line">IFSC: <strong>${esc(bank.ifsc_code)}</strong></div>
-      ` : ''}
-      ${inv.company_upi ? `<div class="payment-line">UPI: <strong>${esc(inv.company_upi)}</strong></div>` : ''}
-      <div class="payment-line" style="margin-top:6px;color:#888888;font-style:italic;">
-        Payment within 14 days of invoice date.
+    <div class="company-info">
+      <div class="company-name">${inv.company_name}</div>
+      ${inv.company_address ? `<div class="company-detail">${inv.company_address}</div>` : ''}
+      <div class="company-detail">
+        ${inv.company_gstin ? `GSTIN: ${inv.company_gstin}` : ''}
+        ${inv.company_pan ? ` &nbsp;·&nbsp; PAN: ${inv.company_pan}` : ''}
       </div>
     </div>
-    <div class="qr-block">
-      ${upiQR ? `
+  </div>
+  <div class="invoice-title-block">
+    <div class="invoice-word">TAX INVOICE</div>
+    <div class="invoice-number"># ${inv.invoice_no}</div>
+    <div class="balance-due-label">Balance Due</div>
+    <div class="balance-due-amount">${fmt(balanceDue)}</div>
+  </div>
+</div>
+
+<hr class="divider" />
+
+<!-- ═══ BILL TO + INVOICE DETAILS ═══ -->
+<div class="meta-section">
+  <div class="bill-to-block">
+    <div class="block-label">Bill To</div>
+    <div class="bill-to-name">${inv.client_name}</div>
+    ${inv.client_org ? `<div class="bill-to-detail">${inv.client_org}</div>` : ''}
+    ${inv.client_address ? `<div class="bill-to-detail">${inv.client_address}</div>` : ''}
+    ${inv.client_email ? `<div class="bill-to-detail">${inv.client_email}</div>` : ''}
+    ${inv.client_phone ? `<div class="bill-to-detail">${inv.client_phone}</div>` : ''}
+    ${inv.client_gstin ? `<div class="bill-to-gstin">GSTIN: ${inv.client_gstin}</div>` : ''}
+  </div>
+  <div class="invoice-details-block">
+    <div class="detail-row">
+      <span class="detail-label">Invoice Date</span>
+      <span class="detail-value">${fmtDate(inv.invoice_date)}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Supply Date</span>
+      <span class="detail-value">${fmtDate(inv.supply_date)}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Terms</span>
+      <span class="detail-value">Net 14</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Due Date</span>
+      <span class="detail-value">${fmtDate(inv.due_date)}</span>
+    </div>
+    ${inv.po_number ? `
+    <div class="detail-row">
+      <span class="detail-label">P.O. #</span>
+      <span class="detail-value">${inv.po_number}</span>
+    </div>` : ''}
+  </div>
+</div>
+
+<!-- ═══ PLACE OF SUPPLY + COMPLIANCE ═══ -->
+<div class="place-of-supply">Place of Supply: <strong>Tamil Nadu (33)</strong></div>
+
+<div class="compliance-strip">
+  <span>GST Type: <strong>${isCGST ? 'CGST + SGST' : 'IGST'}</strong></span>
+  <span>Reverse Charge: <strong>${inv.reverse_charge ? 'Yes' : 'No'}</strong></span>
+  ${inv.e_way_bill_no ? `<span>E-Way Bill: <strong>${inv.e_way_bill_no}</strong></span>` : ''}
+</div>
+
+<!-- ═══ LINE ITEMS ═══ -->
+<table class="items">
+  <thead>
+    <tr>
+      <th style="text-align:center;width:32px">#</th>
+      <th style="text-align:left;">Item &amp; Description</th>
+      <th style="width:60px">HSN/SAC</th>
+      <th style="width:50px">Qty</th>
+      <th style="width:80px">Rate</th>
+      ${isCGST ? `
+      <th style="width:70px">CGST</th>
+      <th style="width:70px">SGST</th>
+      ` : `
+      <th style="width:70px">IGST</th>
+      `}
+      ${discount > 0 ? `<th style="width:70px">Discount</th>` : ''}
+      <th style="width:90px">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="item-num">1</td>
+      <td class="item-desc">
+        <div class="item-title">${inv.service_description || 'Professional Services'}</div>
+      </td>
+      <td class="item-num-right" style="text-align:center;color:#888888;font-size:8pt;">${inv.hsn_code || '998314'}</td>
+      <td class="item-num-right">${qty.toFixed(2)}</td>
+      <td class="item-num-right">${fmt(rate)}</td>
+      ${isCGST ? `
+      <td class="tax-cell">9%<br/><span style="font-weight:600;color:#2D2D2D;">${fmt(cgst)}</span></td>
+      <td class="tax-cell">9%<br/><span style="font-weight:600;color:#2D2D2D;">${fmt(sgst)}</span></td>
+      ` : `
+      <td class="tax-cell">18%<br/><span style="font-weight:600;color:#2D2D2D;">${fmt(igst)}</span></td>
+      `}
+      ${discount > 0 ? `<td class="tax-cell" style="color:#E05C2A;">0.00</td>` : ''}
+      <td class="item-amount">${fmt(taxableAmount)}</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ═══ TOTALS ═══ -->
+<div class="totals-section">
+  <div class="totals-block">
+    <div class="total-row">
+      <span class="t-label">Sub Total</span>
+      <span class="t-value">${fmt(taxableAmount)}</span>
+    </div>
+    ${isCGST ? `
+    <div class="total-row">
+      <span class="t-label">CGST (9%)</span>
+      <span class="t-value">${fmt(cgst)}</span>
+    </div>
+    <div class="total-row">
+      <span class="t-label">SGST (9%)</span>
+      <span class="t-value">${fmt(sgst)}</span>
+    </div>
+    ` : `
+    <div class="total-row">
+      <span class="t-label">IGST (18%)</span>
+      <span class="t-value">${fmt(igst)}</span>
+    </div>
+    `}
+    ${discount > 0 ? `
+    <div class="total-row discount">
+      <span class="t-label">Discount</span>
+      <span class="t-value">(-) ${fmt(discount)}</span>
+    </div>` : ''}
+    ${Math.abs(rounding) > 0.001 ? `
+    <div class="total-row">
+      <span class="t-label">Rounding</span>
+      <span class="t-value">${rounding > 0 ? '+' : ''}${fmt(rounding)}</span>
+    </div>` : ''}
+    <div class="total-row grand-total">
+      <span class="t-label">Total</span>
+      <span class="t-value">${fmt(total)}</span>
+    </div>
+    <div class="total-row balance-due-row">
+      <span class="t-label">Balance Due</span>
+      <span class="t-value">${fmt(balanceDue)}</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ BOTTOM SECTION ═══ -->
+<div class="bottom-section">
+
+  <!-- Amount in words -->
+  <div class="words-row">
+    <strong>Amount in Words</strong>
+    ${amountInWords(total)}
+  </div>
+
+  <!-- Payment + QR -->
+  <div class="payment-row">
+    <div class="payment-details">
+      <div class="block-label">Payment Options</div>
+      ${bank ? `
+      <div class="payment-line">Bank: <strong>${bank.bank_name}</strong></div>
+      <div class="payment-line">A/C Name: <strong>${bank.account_name}</strong></div>
+      <div class="payment-line">A/C No: <strong>${bank.account_no}</strong> &nbsp;|&nbsp; IFSC: <strong>${bank.ifsc_code}</strong></div>
+      ` : ''}
+      ${inv.company_upi ? `<div class="payment-line">UPI: <strong>${inv.company_upi}</strong></div>` : ''}
+      <div class="payment-line" style="margin-top:4px;color:#AAAAAA;font-size:7.5pt;">
+        Payment due within 14 days of invoice date.
+      </div>
+    </div>
+    <div class="qr-group">
+      ${inv.company_upi ? `
       <div class="qr-item">
-        <img src="${upiQR}" width="100" height="100" />
+        <img src="${upiQR}" width="88" height="88" />
         <div class="qr-caption">Scan to Pay</div>
       </div>` : ''}
       <div class="qr-item">
-        <img src="${agentQR}" width="64" height="64" />
+        <img src="${agentQR}" width="56" height="56" />
         <div class="qr-caption">Invoice Data</div>
       </div>
     </div>
   </div>
 
-  <!-- NOTES -->
-  ${inv.notes ? `
-  <div style="margin-top:12px; border:1px solid #D0D0D0; padding:8px 12px; page-break-inside:avoid;">
-    <div class="section-title">Notes</div>
-    <div style="font-family:'IBM Plex Mono',monospace;font-size:8.5pt;color:#444444;margin-top:4px;white-space:pre-line;">${esc(inv.notes)}</div>
-  </div>` : ''}
+  <hr class="divider" />
 
-  <!-- TERMS + SIGNATURE -->
-  <div class="footer-section">
-    <div class="terms-box">
-      <div class="section-title">Terms &amp; Conditions</div>
-      <div class="terms-text">${esc(terms)}</div>
+  <!-- Notes + Terms + Signature -->
+  <div class="footer-row">
+    ${inv.notes ? `
+    <div class="notes-block">
+      <div class="block-label">Notes</div>
+      <div class="notes-text">${inv.notes}</div>
+    </div>` : '<div class="notes-block"></div>'}
+
+    <div class="terms-block">
+      <div class="block-label">Terms &amp; Conditions</div>
+      <div class="terms-text">${terms}</div>
     </div>
-    <div class="signature-box">
-      <div class="signature-for">For<br/><strong>${esc(inv.company_name)}</strong></div>
+
+    <div class="signature-block">
+      <div class="for-company">For ${inv.company_name}</div>
+      <div class="signature-space">
+        ${sealBase64 ? `<img src="${sealBase64}" alt="seal" />` : ''}
+      </div>
       <div class="signature-line"></div>
       <div class="signature-label">Authorized Signatory</div>
     </div>
   </div>
 
-  <!-- AUDIT FOOTER -->
-  <div style="margin-top:10px; border-top:1px solid #E0E0E0; padding-top:6px; display:flex; justify-content:space-between;">
-    <span style="font-family:'IBM Plex Mono',monospace;font-size:6.5pt;color:#AAAAAA;">
-      Generated: ${new Date().toISOString()} &middot; CBOP v2 &middot; cbop_control@etherence
-    </span>
-    <span style="font-family:'IBM Plex Mono',monospace;font-size:6.5pt;color:#AAAAAA;">
-      ${esc(inv.invoice_no)} &middot; ${esc(inv.company_gstin) || 'N/A'}
-    </span>
-  </div>
-
 </div>
+
+<!-- ═══ AUDIT FOOTER ═══ -->
+<div class="audit-footer">
+  <span>Generated: ${new Date().toISOString()} · CBOP v2</span>
+  <span>${inv.invoice_no} · ${inv.company_gstin || 'GSTIN Applied For'}</span>
+</div>
+
 </body>
 </html>`
 

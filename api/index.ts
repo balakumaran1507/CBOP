@@ -19,6 +19,7 @@ import mentorRoutes from './routes/mentor'
 import settingsRoutes from './routes/settings'
 import webhooksRoutes from './routes/webhooks'
 import agentsRoutes from './routes/agents'
+import internalRoutes from './routes/internal'
 
 const app = new Hono()
 
@@ -133,5 +134,8 @@ app.route('/', settingsRoutes)
 app.route('/', webhooksRoutes)
 // Slice 12: OpenClaw agent trigger + cbop_control tool endpoints
 app.route('/', agentsRoutes)
+
+// Internal: email send endpoint for n8n (never expose externally)
+app.route('/', internalRoutes)
 
 export default app

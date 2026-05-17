@@ -110,6 +110,16 @@ export default function LoginPage() {
               {loading ? 'Signing in…' : 'Sign in'}
             </button>
           </form>
+
+          <div className="mt-4 text-center">
+            <a
+              href="/forgot-password"
+              className="text-sm"
+              style={{ color: 'var(--blue)', textDecoration: 'none' }}
+            >
+              Forgot password?
+            </a>
+          </div>
         </div>
       </div>
     </div>

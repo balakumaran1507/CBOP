@@ -1,4 +1,5 @@
 'use client'
+import React from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AlertBar } from '@/app/components/alert-bar'
 import { StatCard, StatCardSkeleton } from '@/app/components/stat-card'
@@ -168,6 +169,50 @@ function JobRow({ job }: { job: Job }) {
   )
 }
 
+// ─── morning briefing card ────────────────────────────────────────────────────
+
+function MorningBriefingCard() {
+  const [status, setStatus] = React.useState<'idle' | 'running' | 'done' | 'error'>('idle')
+
+  async function triggerBriefing() {
+    setStatus('running')
+    try {
+      const res = await fetch('/api/agents/trigger/morning_briefing', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      setStatus(res.ok ? 'done' : 'error')
+    } catch {
+      setStatus('error')
+    }
+  }
+
+  return (
+    <SectionCard title="Morning Briefing">
+      <p className="text-sm" style={{ color: 'var(--text2)' }}>
+        Daily briefing via <span style={{ fontFamily: 'var(--font-ibm-plex-mono), monospace' }}>morning_briefing</span> agent.
+        Runs automatically at 8am on weekdays.
+      </p>
+      <button
+        onClick={triggerBriefing}
+        disabled={status === 'running'}
+        className="mt-3 text-xs px-3 py-1.5 rounded transition-opacity hover:opacity-80 disabled:opacity-40"
+        style={{ backgroundColor: '#0073BB', color: '#fff', fontFamily: 'var(--font-inter), sans-serif' }}
+      >
+        {status === 'running' ? 'Triggering…' : 'Run Now'}
+      </button>
+      {status === 'done' && (
+        <p className="text-xs mt-2" style={{ color: 'var(--green)' }}>Briefing triggered — check Telegram.</p>
+      )}
+      {status === 'error' && (
+        <p className="text-xs mt-2" style={{ color: 'var(--red)' }}>Failed to trigger. Check agent status.</p>
+      )}
+    </SectionCard>
+  )
+}
+
 // ─── page ─────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -289,14 +334,7 @@ export default function DashboardPage() {
           <div className="flex flex-col gap-5">
 
             {/* Morning Briefing */}
-            <SectionCard title="Morning Briefing">
-              <p className="text-sm" style={{ color: 'var(--text2)' }}>
-                Daily briefing at 8am via morning_briefing agent.
-              </p>
-              <p className="text-xs mt-2" style={{ color: 'var(--text3)' }}>
-                Available after Slice 12.
-              </p>
-            </SectionCard>
+            <MorningBriefingCard />
 
             {/* Invoice Alerts */}
             <SectionCard title="Invoice Alerts">

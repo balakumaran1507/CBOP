@@ -1,7 +1,7 @@
 # CBOP HANDOFF
 
 ## Last updated
-2026-05-17 — Invoice PDF v3 template + migration 008
+2026-05-17 — Patches 1–5: GST compliance, seal, templates, PWA, n8n email fix
 
 ## Completed slices
 ✅ Slice 0 — Infrastructure Setup
@@ -19,59 +19,48 @@
 ✅ Slice 11 — n8n Automations
 ✅ Slice 12 — OpenClaw Agents
 ✅ Slice 13 — Security Audit + Deploy
-
-## Current slice
-Slice 13 — Security Audit + Deploy — complete ✅
+✅ Patch 1 — GST address fields: supplier + client address on invoices
+✅ Patch 2 — Company seal support on invoice PDF
+✅ Patch 3 — 10 professional templates seeded
+✅ Patch 4 — PWA manifest + service worker — installable on phone
+✅ Patch 5 — n8n email workflows verified on internal SMTP (already correct)
 
 ## What works right now
-All v2 features are complete and security-hardened.
+Full CBOP v2 feature set (all 13 slices) plus patches 1–5.
+
+### Post-patch additions
+- Invoices now render supplier address (below company name) and client address (in Bill To)
+- Company seal renders in signature section of invoice PDF (path-based, semi-transparent)
+- Settings → Companies slide-over now has Address textarea and Seal Image Path input
+- 10 professional templates in DB (run `node scripts/seed-templates.js` to populate)
+- Template PDF export redesigned: Zoho-style with circle logo, company name, address, GSTIN, doc type in header. Inter-only, zero amber.
+- CBOP is a PWA: manifest.json, sw.js, icons in /public/icons/. Add to Home Screen works on mobile.
+- n8n welcome email workflows (client_onboarding + employee_onboarding) already use POST /api/internal/send-email — confirmed correct, no changes needed.
 
 ### Security hardening (Slice 13)
 - Rate limiting on `/api/auth/*` — 10 requests/60s per IP, in-memory Map, auto-prune
-- Security headers on all API responses via `hono/secure-headers`:
-  - `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`
-  - `X-Frame-Options: DENY`
-  - `X-Content-Type-Options: nosniff`
-  - `Referrer-Policy: strict-origin-when-cross-origin`
-  - Full CSP: `default-src 'self'`, script/style/font/img whitelisted
-- Security headers on all Next.js responses via `next.config.js` headers()
-- IDOR fixed: `getOverdueInvoices` — validates query `company_id` against session companyIds
-- IDOR fixed: `getTodaysTasks` — query `user_id` now restricted to CEO/COO only; CTO always sees own tasks
-- IDOR fixed: `getPipelineSummary` — validates query `company_id` against session companyIds
-- Defense-in-depth: invoice remind UPDATE now includes `AND company_id = ANY($2)` filter
-- All finance routes: `requireRole('ceo')` — personal wealth never exposed outside CEO gate ✅
-- All queries filter by `company_id = ANY(companyIds)` from session ✅
-- No secrets in code or DB — all from `process.env` ✅
+- Security headers on all API responses via `hono/secure-headers`
+- IDOR fixed: getOverdueInvoices, getTodaysTasks, getPipelineSummary
+- All finance routes: `requireRole('ceo')` ✅
+- All queries filter by `company_id = ANY(companyIds)` ✅
 
 ### Core platform
 - Auth (better-auth v0.8.8), session, health check at `/api/health`
 - Dashboard — stat cards, alert bar, today's priorities, tasks, activity feed, invoice alerts
-- `GET /api/companies`, `GET /api/users` — dropdown data
-- `GET/POST/PATCH /api/deals`, `PATCH /api/deals/:id/stage` — pipeline CRUD
-- `GET/POST/PATCH /api/invoices` — invoice CRUD; auto invoice_no; GST calc
-- `GET /api/invoices/:id/pdf` — enterprise themed PDF
-- `POST /api/invoices/:id/remind` — WhatsApp via OpenClaw
-- `GET/POST/PATCH /api/leads` — lead CRUD; n8n lead-updated webhook
-- `POST /api/leads/:id/convert-to-deal` — upserts client, creates deal, fires webhooks
-- `GET/POST /api/clients` — client CRUD
-- `GET/POST/PATCH /api/projects` — project CRUD
-- `GET/POST/PATCH /api/tasks` — task CRUD; project_id required
-- `GET/POST/PATCH /api/sessions` — work session CRUD
-- `GET/POST/PATCH /api/templates` + PDF export — with auto-versioning
-- `GET /api/finance/*` — company health, P&L, holdings, expenses (requireRole ceo)
-- `GET/POST /api/finance/personal-wealth` — CEO-only; NEVER in agent context
-- `GET/POST /api/mentor/*` — mentor council chat, history, share links (requireRole ceo)
-- `GET/POST/PATCH /api/settings/*` — users, companies, jobs, integrations
-- `POST /webhooks/lead-updated|client-created|user-created` — n8n webhook receivers
-- `POST /api/agents/trigger/:name` — async agent trigger with system_jobs tracking
-- `/api/agents/cbop-control/tools/*` — 10 cbop_control tool endpoints
+- Full sales pipeline: leads, deals, clients, invoices + PDF
+- Full ops: projects, tasks, work sessions
+- Templates + PDF export (Zoho-style)
+- Finance (CEO-only): P&L, holdings, expenses, personal wealth
+- Mentor Council AI (CEO-only)
+- CEO Panel with cbop_control agent
+- Settings: users, companies (address + seal), system jobs, integrations
+- n8n: 7 workflows; email via internal SMTP endpoint
 
 ### Infrastructure
 - PostgreSQL container: `cbop-postgres` — Running ✅
 - n8n container: `cbop-n8n` — Running ✅
-- CBOP app: running directly via `npm start -p 3003` (not Docker — homeserver native)
-- Git tag: `v2.0.0` — tagged ✅
-- `npm run build` — clean (warnings only, no errors) ✅
+- CBOP app: runs natively via `npm start -p 3003`
+- `npm run build` — clean ✅
 
 ## DB bootstrap (run once on fresh postgres — in this exact order)
 1. `docker exec -i cbop-postgres psql -U cbop_user -d cbop_v2 < migrations/001_initial_schema.sql`
@@ -81,61 +70,62 @@ All v2 features are complete and security-hardened.
 5. `docker exec -i cbop-postgres psql -U cbop_user -d cbop_v2 < migrations/005_invoice_details.sql`
 6. `docker exec -i cbop-postgres psql -U cbop_user -d cbop_v2 < migrations/006_invoice_v2.sql`
 7. `docker exec -i cbop-postgres psql -U cbop_user -d cbop_v2 < migrations/007_ceo_panel.sql`
-8. `npm run dev` — start the app first (seed calls the auth HTTP API)
-9. `npm run db:seed`
+8. `docker exec -i cbop-postgres psql -U cbop_user -d cbop_v2 < migrations/008_invoice_pdf_v3.sql`
+9. `docker exec -i cbop-postgres psql -U cbop_user -d cbop_v2 < migrations/009_address_fields.sql`
+10. `docker exec -i cbop-postgres psql -U cbop_user -d cbop_v2 < migrations/010_company_seal.sql`
+11. `npm run dev` — start the app first (seed calls the auth HTTP API)
+12. `npm run db:seed`
+13. `node scripts/seed-templates.js`
+
+## Manual steps still needed
+- Run migrations 009 and 010 against the live database:
+  ```
+  docker exec -i cbop-postgres psql -U cbop_user -d cbop_v2 < migrations/009_address_fields.sql
+  docker exec -i cbop-postgres psql -U cbop_user -d cbop_v2 < migrations/010_company_seal.sql
+  ```
+- Seed templates: `node scripts/seed-templates.js`
+- Add real company addresses: Settings → Companies → edit each company
+- Upload real company seal PNGs to `/public/seals/` and set path in Settings → Companies
+- Re-import n8n workflows after any future workflow changes:
+  `docker exec cbop-n8n n8n import:workflow --separate --input=/workflows/`
+  Then re-select CBOP Postgres credential in updated workflows + activate
+- n8n: toggle all 7 workflows to Active in n8n UI; set error_handler as global error workflow
 
 ## Files changed this session
-- `api/index.ts` — added `hono/secure-headers` middleware (HSTS, X-Frame-Options, X-Content-Type-Options, CSP), in-memory auth rate limiter (10 req/60s per IP on `/api/auth/*`); wired internalRoutes
-- `api/routes/agents.ts` — fixed 3 IDOR vulnerabilities: getOverdueInvoices, getTodaysTasks, getPipelineSummary
-- `api/routes/invoices.ts` — invoice remind UPDATE now includes company_id filter (defense-in-depth)
-- `next.config.js` — added `headers()` for X-Frame-Options, X-Content-Type-Options, HSTS, Referrer-Policy, Permissions-Policy on all Next.js routes
-- `api/lib/mailer.ts` — NEW: nodemailer SMTP module; single place all email leaves CBOP; config from SMTP_* env vars
-- `api/lib/auth.ts` — added magicLink plugin (disableSignUp, 15min expiry); sendMagicLink uses mailer.ts (not OpenClaw)
-- `api/lib/auth-client.ts` — added magicLinkClient() plugin
-- `api/routes/internal.ts` — NEW: POST /api/internal/send-email for n8n; protected by N8N_WEBHOOK_SECRET (header: x-internal-secret); never expose externally
-- `app/(auth)/login/page.tsx` — added "Forgot password?" link
-- `app/(auth)/forgot-password/page.tsx` — NEW: email input → authClient.signIn.magicLink → confirmation state
-- `CLAUDE.md` — updated constraints: Telegram/WhatsApp via OpenClaw only; email via mailer.ts only
-- `n8n/workflows/client_onboarding.json` — co-node-08: replaced OpenClaw /send (channel: email) with POST /api/internal/send-email; inline subject/text/html; header x-internal-secret
-- `n8n/workflows/employee_onboarding.json` — added eo-node-10 "Send Welcome Email" (POST /api/internal/send-email, x-internal-secret); chained before Telegram node; employee now receives welcome email + Telegram
-- `api/routes/internal.ts` — fixed header check: x-webhook-secret → x-internal-secret (matches workflow spec)
-- `api/lib/pdf-generator.ts` — Invoice PDF v3: replaced entire html template (clean Inter-only design, Balance Due in header, P.O. # row, compliance strip, discount column, seal in signature block); added po_number/discount_amount/balance_due to SELECT from sales_invoices; added company_address/company_seal to SELECT from companies; added discount + balanceDue computed values; added sealBase64 loading (same pattern as logo); initials sliced to 2 chars
-- `migrations/008_invoice_pdf_v3.sql` — NEW: adds po_number, discount_amount, balance_due to sales_invoices; adds address, company_seal to companies; backfills balance_due
+- `migrations/009_address_fields.sql` — NEW: IF NOT EXISTS for companies.address and sales_clients.address
+- `migrations/010_company_seal.sql` — NEW: IF NOT EXISTS for companies.company_seal
+- `api/routes/settings.ts` — GET /api/settings/companies now returns address + company_seal; PATCH now accepts and saves both fields
+- `app/(dashboard)/settings/page.tsx` — SettingsCompany interface + EditCompanySlideOver form: added address textarea and company_seal path input
+- `api/routes/templates.ts` — PDF endpoint now fetches company address, gstin, logo, theme, seal; buildTemplatePdf rebuilt as Zoho-style (circle logo, Inter-only, doc type header, no amber)
+- `scripts/seed-templates.js` — NEW: seeds 10 professional templates (Indian jurisdiction)
+- `public/manifest.json` — NEW: PWA manifest
+- `public/sw.js` — NEW: service worker (network-first, offline fallback)
+- `public/icons/icon-192.png` — NEW: generated PWA icon
+- `public/icons/icon-512.png` — NEW: generated PWA icon
+- `public/seals/.gitkeep` — NEW: placeholder for company seal PNGs
+- `scripts/generate-icons.js` — NEW: generates PWA icons via sharp
+- `app/components/ServiceWorkerRegistration.tsx` — NEW: client component that registers sw.js
+- `app/layout.tsx` — added PWA meta tags + manifest link + ServiceWorkerRegistration component
+- `next.config.js` — added Service-Worker-Allowed header for /sw.js
 
 ## Failed attempts — do not retry
+(All from prior sessions — see git log for v2.0.0 context)
 - Mapping better-auth to our `users` table via `advanced.database` — v0.8 requires Kysely dialect.
 - Snake_case columns in `002_auth_tables.sql` — better-auth v0.8 expects camelCase. Do not revert.
 - `token` column in session table — NOT NULL kills sign-up silently. Removed.
-- `accessTokenExpiresAt`/`refreshTokenExpiresAt` in account table — only `expiresAt` exists. Fixed.
 - `new Hono()` without type params + `c.get('userId')` — TypeScript infers `never`. Fix: use hono-vars.ts.
-- Using `new Date().toISOString().split('T')[0]` for SQL dates — always UTC, breaks IST before 5:30 AM. Use `CURRENT_DATE`.
-- `ORDER BY priority DESC` on TEXT — alphabetical. Fix: CASE WHEN sort.
-- `pg` returns `NUMERIC` as JS strings — must `parseFloat(String(amount))`.
-- Passing `Buffer` to `new Response()` — cast `pdf as unknown as BodyInit`.
-- Old `buildInvoicePdf(data: InvoiceRenderData)` — do not revert; new pattern is `buildInvoicePdf(invoiceId)`.
-- TanStack Query `onSuccess` option in `useQuery` — does not exist in v5. Use `useEffect` watching the data ID.
 - `const guard = [requireAuth, requireRole('ceo')]` + `...guard` spread in Hono routes — TypeScript infers incorrectly. Always inline middleware.
 - `use(params)` in Next.js 14 page components — params is a plain object in Next.js 14. Always destructure directly.
-- Keyed fragments in `<tbody>` — use `React.Fragment key={...}` not `<>` shorthand.
-- Duplicate style object keys in React — last one wins silently.
-- `mcpServers` in `~/.claude/settings.json` — schema validation rejects it. Use `claude mcp add` CLI instead.
-- `permissionsPolicy` in `hono/secure-headers` — expects `boolean | string[]` not a string like `'()'`. Use `false` or remove it; set via next.config.js headers instead.
-- Rate limiter function returning `c.json(...)` directly (non-async) — TypeScript rejects non-Promise middleware return. Must be `async` with `await next()`.
-- Dockerfile + cbop-app Docker service — Dockerfile requires `output: 'standalone'` in next.config.js (not set). Also no Chromium for Puppeteer in node:18-alpine. CBOP app runs natively on homeserver, not in Docker. `docker compose up` should only target postgres and n8n.
+- `permissionsPolicy` in `hono/secure-headers` — use `false` or remove; set via next.config.js.
+- Dockerfile + cbop-app Docker service — CBOP runs natively on homeserver, not in Docker.
 
-## Known issues / deferred
+## Known issues
 - **`updated_at` is trigger-managed** — never set manually in PATCH queries.
-- **n8n credential ID mismatch after import** — after importing workflows, open each in n8n UI and re-select the `CBOP Postgres` credential from the dropdown.
-- **n8n workflows not yet activated** — all 7 workflows imported but need manual toggle to Active in n8n UI. Also set error_handler as global error workflow in Settings.
-- **TELEGRAM_NABEELAH_CHAT_ID / TELEGRAM_GURU_CHAT_ID** — blank in .env; fill when available.
-- **`employee_onboarding` templates** — requires `ops_task_templates` rows with `service_type = 'employee_onboarding'`.
+- **n8n credential ID mismatch after import** — after importing, re-select `CBOP Postgres` credential per workflow.
+- **Auth rate limiter is in-memory** — resets on app restart. Acceptable for 3-user homeserver.
+- **Uptime Kuma monitors** — configure `/api/health` monitor manually in Uptime Kuma UI.
+- **morning_briefing daily 8am** — only fires via Monday reporting workflow. Needs dedicated n8n cron.
 - **Work page has no frontend role gate** — CTO only sees Etherence IT data via companyIds API filter.
-- **Mentor Council AI** — calls OpenClaw `/agent` with name `mentor_council`; gracefully saves message and returns "[Mentor offline]" if unavailable.
-- **Retry job is re-enqueue only** — creates new system_jobs row with status=pending.
-- **OpenClaw cbop_control agent config** — tool URLs must be registered in OpenClaw's agent config for cbop_control. Format depends on OpenClaw agent definition file (not in this repo).
-- **morning_briefing daily 8am** — spec says daily; currently only triggered by Monday reporting n8n workflow.
-- **Auth rate limiter is in-memory** — resets on app restart. Acceptable for 3-user homeserver; upgrade to Redis-backed if attack surface grows.
-- **Uptime Kuma monitors** — configure `/api/health` endpoint monitor and TCP port check for postgres. Manual step in Uptime Kuma UI.
 
 ## Credentials
 - founders@cybercomctf.com / T6Y8F9juH6mYVn (CEO — all companies)
@@ -166,19 +156,8 @@ docker compose up -d postgres n8n
 
 - **Never `npm run dev` through a tunnel** — HMR WebSocket breaks chunk loading
 - **404 on frontend resources = stale build.** Fix: kill + rebuild + restart.
-- **Puppeteer flags** — `--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage` required on this homeserver.
+- **Puppeteer flags** — `--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage` required.
 - **Outline is on port 3001** — not 3000 (3000 is Gitea)
-- **cbop-app Docker service in docker-compose.yml** — broken (no standalone output, no Chromium). Ignore it. CBOP runs natively.
 
 ## Next session
-CBOP v2 is complete. All 13 slices delivered. Release tagged v2.0.0.
-
-Post-release testing/fixes in progress.
-
-Possible follow-up work:
-- Test forgot password end-to-end: /forgot-password → email arrives → magic link → /dashboard
-- Uptime Kuma: configure `/api/health` monitor (manual in Uptime Kuma UI)
-- n8n: toggle all 7 workflows to Active, set error_handler as global error workflow; re-import client_onboarding + employee_onboarding JSONs (email nodes updated)
-- OpenClaw: register cbop_control tool URLs in agent config
-- Fill TELEGRAM_NABEELAH_CHAT_ID and TELEGRAM_GURU_CHAT_ID in .env when available
-- Add morning_briefing daily n8n cron workflow (currently only fires via Monday reporting)
+v2.5 planning — client portal, mobile app (React Native/Expo), or agentic architecture improvements.

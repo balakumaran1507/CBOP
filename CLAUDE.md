@@ -17,7 +17,8 @@ Internal business operations platform for 4 companies. Self-hosted on a single U
 
 - **Postgres + better-auth only.** No Supabase. No Redis. No Bull.js. No Supabase RLS.
 - **n8n for all 6 automations.** No custom queue or scheduler code in CBOP.
-- **All messaging through OpenClaw only.** Never call Telegram Bot API or WhatsApp Business API directly from CBOP or n8n. Always use `POST http://127.0.0.1:18789/send`. This is the only way messages leave the system.
+- **Telegram + WhatsApp through OpenClaw only.** Never call Telegram Bot API or WhatsApp Business API directly from CBOP or n8n. Always use `POST http://127.0.0.1:18789/send` for those channels.
+- **Email via nodemailer only.** All email sends go through `api/lib/mailer.ts` → `sendEmail()`. Never route email through OpenClaw. n8n triggers email via `POST /api/internal/send-email` (protected by `N8N_WEBHOOK_SECRET`). This endpoint must never be exposed externally via Nginx.
 - **SOPs from Outline only.** Notion does not exist in this project. No Notion API calls anywhere.
 - **No global search bar.** Table filters only — client-side, per-table text inputs that filter visible rows. No universal search, no command palette.
 - **Trainer AI does not exist in v2.** No `trainer_*` files, tables, components, routes, or imports. Do not create them. Do not reference them.

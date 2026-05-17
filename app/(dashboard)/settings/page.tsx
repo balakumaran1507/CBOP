@@ -39,6 +39,8 @@ interface SettingsCompany {
   upi_id: string | null
   bank_details: Record<string, string> | null
   invoice_prefix: string | null
+  address: string | null
+  company_seal: string | null
 }
 
 interface SystemJob {
@@ -615,7 +617,7 @@ function EditCompanySlideOver({
   onClose: () => void
   onSuccess: () => void
 }) {
-  const [form, setForm] = useState({ name: '', type: '', gstin: '', upi_id: '', bank_details_raw: '' })
+  const [form, setForm] = useState({ name: '', type: '', gstin: '', upi_id: '', bank_details_raw: '', address: '', company_seal: '' })
   const [err, setErr] = useState('')
 
   useEffect(() => {
@@ -626,6 +628,8 @@ function EditCompanySlideOver({
         gstin: company.gstin ?? '',
         upi_id: company.upi_id ?? '',
         bank_details_raw: company.bank_details ? JSON.stringify(company.bank_details, null, 2) : '',
+        address: company.address ?? '',
+        company_seal: company.company_seal ?? '',
       })
       setErr('')
     }
@@ -648,6 +652,8 @@ function EditCompanySlideOver({
           gstin: data.gstin || undefined,
           upi_id: data.upi_id || undefined,
           bank_details,
+          address: data.address,
+          company_seal: data.company_seal,
         }),
       }).then(async (r) => {
         if (!r.ok) { const j = await r.json(); throw new Error(j.error || 'Failed') }
@@ -695,6 +701,26 @@ function EditCompanySlideOver({
             fontFamily: 'var(--font-mono)', fontSize: '0.8rem', resize: 'vertical',
           }}
         />
+      </Field>
+      <Field label="Company Address">
+        <textarea
+          value={form.address}
+          onChange={(e) => setForm({ ...form, address: e.target.value })}
+          placeholder="No. 12, Example Street, Chennai 600 001"
+          rows={3}
+          style={{ ...inputStyle, height: 'auto', padding: '8px 10px', resize: 'vertical' }}
+        />
+      </Field>
+      <Field label="Seal Image Path">
+        <input
+          style={inputStyle}
+          value={form.company_seal}
+          onChange={(e) => setForm({ ...form, company_seal: e.target.value })}
+          placeholder="/home/nigga/CBOP/public/seals/etherence_seal.png"
+        />
+        <p className="mt-1 text-xs" style={{ color: 'var(--text3)' }}>
+          PNG with transparent background. Place files in <code className="font-mono">/public/seals/</code>
+        </p>
       </Field>
 
       <div className="flex gap-2 pt-2">

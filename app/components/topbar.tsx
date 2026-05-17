@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { authClient } from '@/app/lib/auth-client'
 
@@ -13,14 +13,7 @@ interface TopbarProps {
 
 export function Topbar({ role, companies, name }: TopbarProps) {
   const router = useRouter()
-  const [selectedCompany, setSelectedCompany] = useState<string>('all')
   const [userMenuOpen, setUserMenuOpen] = useState(false)
-
-  useEffect(() => {
-    if (role === 'cto' && companies.length > 0) {
-      setSelectedCompany(companies[0].id)
-    }
-  }, [role, companies])
 
   async function handleLogout() {
     await authClient.signOut()
@@ -36,27 +29,6 @@ export function Topbar({ role, companies, name }: TopbarProps) {
         <span className="font-semibold text-white text-sm" style={{ fontFamily: 'var(--font-syne), sans-serif', letterSpacing: '0.05em' }}>
           CBOP
         </span>
-
-        {role !== 'cto' && companies.length > 0 && (
-          <select
-            value={selectedCompany}
-            onChange={(e) => setSelectedCompany(e.target.value)}
-            className="text-xs px-2 py-1 rounded outline-none"
-            style={{
-              backgroundColor: 'rgba(255,255,255,0.1)',
-              border: '1px solid rgba(255,255,255,0.2)',
-              color: '#fff',
-              height: '28px',
-            }}
-          >
-            <option value="all" style={{ backgroundColor: '#232F3E' }}>All companies</option>
-            {companies.map((c) => (
-              <option key={c.id} value={c.id} style={{ backgroundColor: '#232F3E' }}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        )}
 
         {role === 'cto' && companies.length > 0 && (
           <span className="text-xs px-2 py-1 rounded" style={{ backgroundColor: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)' }}>

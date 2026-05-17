@@ -146,7 +146,13 @@ app.get('/api/templates/:id/pdf', requireAuth, requireRole('ceo', 'coo'), async 
   const id         = c.req.param('id')
 
   const result = await query(
-    `SELECT t.*, c.name AS company_name
+    `SELECT t.*,
+            c.name         AS company_name,
+            c.address      AS company_address,
+            c.gstin        AS company_gstin,
+            c.logo_url     AS company_logo,
+            c.company_seal AS company_seal,
+            COALESCE(c.invoice_theme, '{"primary":"#2B6EF5","accent":"#1A56DB","onPrimary":"#FFFFFF"}') AS theme
      FROM templates t
      JOIN companies c ON c.id = t.company_id
      WHERE t.id = $1 AND t.company_id = ANY($2)`,
@@ -204,12 +210,13 @@ function esc(str: string | null | undefined): string {
 }
 
 function escContent(str: string): string {
-  return str
+  const escaped = str
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-    .replace(/\n/g, '<br>')
+  // highlight {{variable}} placeholders as grey pills
+  return escaped.replace(/\[\w+\]/g, (m) => `<span class="var-pill">${m}</span>`)
 }
 
 async function buildTemplatePdf(template: Record<string, unknown>): Promise<Buffer> {
@@ -220,48 +227,213 @@ async function buildTemplatePdf(template: Record<string, unknown>): Promise<Buff
   const version     = template.version as number
   const rendered    = renderVariables(content)
 
+  const theme = (() => {
+    const t = template.theme
+    if (!t) return { primary: '#2B6EF5' }
+    try { return typeof t === 'string' ? JSON.parse(t) : t }
+    catch { return { primary: '#2B6EF5' } }
+  })()
+
+  const initials = companyName
+    .split(' ')
+    .map((w: string) => w[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase()
+
+  let logoBase64 = ''
+  if (template.company_logo) {
+    try {
+      const fs = await import('fs/promises')
+      const buf = await fs.readFile(template.company_logo as string)
+      const ext = (template.company_logo as string).split('.').pop()?.toLowerCase() || 'png'
+      logoBase64 = `data:image/${ext};base64,${buf.toString('base64')}`
+    } catch { logoBase64 = '' }
+  }
+
+  const docType = (type || 'document').toUpperCase()
+  const today   = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+
   const html = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&family=Syne:wght@700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
   * { margin: 0; padding: 0; box-sizing: border-box; }
+
   @page { size: A4; margin: 0; }
-  body { font-family: 'Inter', Arial, sans-serif; font-size: 10.5pt; color: #1A1A1A; background: #fff; }
-  .page { padding: 20mm; }
-  .header { border-bottom: 3px solid #E8820C; padding-bottom: 16px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: flex-end; }
-  .doc-type { font-family: 'IBM Plex Mono', monospace; font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.15em; color: #E8820C; font-weight: 600; margin-bottom: 4px; text-transform: capitalize; }
-  .doc-name { font-family: 'Syne', sans-serif; font-size: 20pt; font-weight: 700; color: #16191F; line-height: 1; }
-  .header-right { font-family: 'IBM Plex Mono', monospace; font-size: 8pt; color: #687078; text-align: right; line-height: 1.7; }
-  .content { font-size: 10.5pt; line-height: 1.9; color: #232F3E; }
-  .preview-note { font-family: 'IBM Plex Mono', monospace; font-size: 7pt; color: #AAB5BB; margin-top: 24px; padding: 8px 12px; border: 1px dashed #D5DBDB; background: #F9FAFB; }
-  .footer { margin-top: 32px; padding-top: 10px; border-top: 1px solid #D5DBDB; display: flex; justify-content: space-between; font-family: 'IBM Plex Mono', monospace; font-size: 6.5pt; color: #AAB5BB; }
+
+  body {
+    font-family: 'Inter', Arial, sans-serif;
+    font-size: 9.5pt;
+    color: #2D2D2D;
+    background: #FFFFFF;
+    padding: 36px 40px 48px 40px;
+  }
+
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 32px;
+  }
+
+  .company-block {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  .logo-circle {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: ${theme.primary};
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .logo-circle img {
+    width: 36px;
+    height: 36px;
+    object-fit: contain;
+    border-radius: 50%;
+  }
+
+  .logo-circle .initials {
+    color: #FFFFFF;
+    font-size: 18pt;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  .company-info .company-name {
+    font-size: 13pt;
+    font-weight: 700;
+    color: #1A1A1A;
+    line-height: 1.2;
+  }
+
+  .company-info .company-detail {
+    font-size: 8pt;
+    color: #777777;
+    margin-top: 3px;
+    line-height: 1.6;
+  }
+
+  .doc-title-block {
+    text-align: right;
+  }
+
+  .doc-type-word {
+    font-size: 22pt;
+    font-weight: 700;
+    color: #1A1A1A;
+    letter-spacing: 0.06em;
+    line-height: 1;
+  }
+
+  .doc-name-line {
+    font-size: 9pt;
+    color: #777777;
+    margin-top: 4px;
+  }
+
+  .doc-date-line {
+    font-size: 8pt;
+    color: #AAAAAA;
+    margin-top: 4px;
+  }
+
+  .doc-version {
+    font-size: 8pt;
+    color: #AAAAAA;
+    margin-top: 2px;
+  }
+
+  .divider {
+    border: none;
+    border-top: 1.5px solid #E8E8E8;
+    margin: 0 0 24px 0;
+  }
+
+  .content {
+    font-size: 9.5pt;
+    line-height: 1.85;
+    color: #2D2D2D;
+    white-space: pre-wrap;
+  }
+
+  .var-pill {
+    display: inline;
+    background: #F0F0F0;
+    padding: 0 4px;
+    border-radius: 3px;
+    font-size: 8.5pt;
+    color: #555555;
+  }
+
+  .preview-note {
+    margin-top: 24px;
+    padding: 8px 12px;
+    border: 1px dashed #D5DBDB;
+    background: #F9FAFB;
+    font-size: 7pt;
+    color: #AAAAAA;
+  }
+
+  .audit-footer {
+    margin-top: 20px;
+    padding-top: 8px;
+    border-top: 1px solid #F0F0F0;
+    display: flex;
+    justify-content: space-between;
+    font-size: 6.5pt;
+    color: #CCCCCC;
+  }
 </style>
 </head>
 <body>
-<div class="page">
-  <div class="header">
-    <div>
-      <div class="doc-type">${esc(type)} Template</div>
-      <div class="doc-name">${esc(name)}</div>
+
+<div class="header">
+  <div class="company-block">
+    <div class="logo-circle">
+      ${logoBase64
+        ? `<img src="${logoBase64}" alt="logo" />`
+        : `<span class="initials">${initials}</span>`
+      }
     </div>
-    <div class="header-right">
-      <div>${esc(companyName)}</div>
-      <div>Version ${version}</div>
-      <div>${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
-      <div>Preview — sample variables</div>
+    <div class="company-info">
+      <div class="company-name">${esc(companyName)}</div>
+      ${template.company_address ? `<div class="company-detail">${esc(template.company_address as string)}</div>` : ''}
+      ${template.company_gstin ? `<div class="company-detail">GSTIN: ${esc(template.company_gstin as string)}</div>` : ''}
     </div>
   </div>
-  <div class="content">${escContent(rendered)}</div>
-  <div class="preview-note">
-    Preview PDF · Variables shown are samples · {{variable_name}} placeholders replaced with live data in production
-  </div>
-  <div class="footer">
-    <span>CBOP v2 · ${esc(companyName)}</span>
-    <span>${esc(name)} · v${version}</span>
+  <div class="doc-title-block">
+    <div class="doc-type-word">${docType}</div>
+    <div class="doc-name-line">${esc(name)}</div>
+    <div class="doc-date-line">${today}</div>
+    <div class="doc-version">Version ${version} · Preview</div>
   </div>
 </div>
+
+<hr class="divider" />
+
+<div class="content">${escContent(rendered)}</div>
+
+<div class="preview-note">
+  Preview PDF &middot; Variables shown are samples &middot; {{variable_name}} placeholders replaced with live data in production
+</div>
+
+<div class="audit-footer">
+  <span>Generated: ${new Date().toISOString()} · CBOP v2</span>
+  <span>${esc(companyName)} · ${esc(name)} · v${version}</span>
+</div>
+
 </body>
 </html>`
 
@@ -275,7 +447,8 @@ async function buildTemplatePdf(template: Record<string, unknown>): Promise<Buff
   const buffer = await page.pdf({
     format: 'A4',
     printBackground: true,
-    margin: { top: '0', bottom: '0', left: '0', right: '0' },
+    margin: { top: '14mm', bottom: '18mm', left: '14mm', right: '14mm' },
+    displayHeaderFooter: false,
   })
   await browser.close()
   return Buffer.from(buffer)

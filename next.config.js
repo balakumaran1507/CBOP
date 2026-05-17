@@ -17,6 +17,10 @@ const nextConfig = {
   async headers() {
     return [
       {
+        source: '/sw.js',
+        headers: [{ key: 'Service-Worker-Allowed', value: '/' }],
+      },
+      {
         source: '/(.*)',
         headers: [
           { key: 'X-Frame-Options',        value: 'DENY' },

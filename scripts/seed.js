@@ -19,9 +19,9 @@ const COMPANIES = [
 ]
 
 const USERS = [
-  { name: 'Balakumaran', email: 'bala@etherence.com',     role: 'ceo', password: 'cbop-bala-2026',     allCompanies: true },
-  { name: 'Nabeelah',    email: 'nabeelah@etherence.com', role: 'coo', password: 'cbop-nabeelah-2026', allCompanies: true },
-  { name: 'Guru',        email: 'guru@etherence.com',     role: 'cto', password: 'cbop-guru-2026',     allCompanies: false },
+  { name: 'Balakumaran', email: 'founders@cybercomctf.com',       role: 'ceo', password: 'T6Y8F9juH6mYVn', allCompanies: true },
+  { name: 'Nabeelah',    email: 'nabeelahanjum.wrk@gmail.com',    role: 'coo', password: 'hNuPgNmY7iUmtG', allCompanies: true },
+  { name: 'Guru',        email: 'guru2006may@gmail.com',          role: 'cto', password: 'sv27FCpRUc4FbF', allCompanies: false },
 ]
 
 async function seed() {

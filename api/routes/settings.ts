@@ -140,7 +140,7 @@ app.patch('/api/settings/users/:id', requireAuth, requireRole('ceo'), async (c) 
 
 app.get('/api/settings/companies', requireAuth, requireRole('ceo'), async (c) => {
   const result = await query(
-    `SELECT id, name, type, gstin, upi_id, bank_details, invoice_prefix, address, company_seal, created_at
+    `SELECT id, name, type, gstin, upi_id, bank_details, invoice_prefix, address, company_seal, logo_initials, created_at
      FROM companies ORDER BY name`,
     []
   )
@@ -152,7 +152,7 @@ app.get('/api/settings/companies', requireAuth, requireRole('ceo'), async (c) =>
 app.patch('/api/settings/companies/:id', requireAuth, requireRole('ceo'), async (c) => {
   const id = c.req.param('id')
   const body = await c.req.json()
-  const { name, type, gstin, upi_id, bank_details, address, company_seal } = body
+  const { name, type, gstin, upi_id, bank_details, address, company_seal, logo_initials } = body
 
   const sets: string[] = []
   const params: unknown[] = []
@@ -164,14 +164,15 @@ app.patch('/api/settings/companies/:id', requireAuth, requireRole('ceo'), async 
   if (upi_id       !== undefined) { sets.push(`upi_id = $${p++}`);       params.push(upi_id) }
   if (bank_details !== undefined) { sets.push(`bank_details = $${p++}`); params.push(JSON.stringify(bank_details)) }
   if (address      !== undefined) { sets.push(`address = $${p++}`);      params.push(address || null) }
-  if (company_seal !== undefined) { sets.push(`company_seal = $${p++}`); params.push(company_seal || null) }
+  if (company_seal    !== undefined) { sets.push(`company_seal = $${p++}`);    params.push(company_seal || null) }
+  if (logo_initials   !== undefined) { sets.push(`logo_initials = $${p++}`);   params.push(logo_initials || null) }
 
   if (sets.length === 0) return c.json({ error: 'No fields to update' }, 400)
 
   params.push(id)
   const result = await query(
     `UPDATE companies SET ${sets.join(', ')} WHERE id = $${p}
-     RETURNING id, name, type, gstin, upi_id, bank_details, invoice_prefix, address, company_seal`,
+     RETURNING id, name, type, gstin, upi_id, bank_details, invoice_prefix, address, company_seal, logo_initials`,
     params
   )
 

@@ -147,11 +147,12 @@ app.get('/api/templates/:id/pdf', requireAuth, requireRole('ceo', 'coo'), async 
 
   const result = await query(
     `SELECT t.*,
-            c.name         AS company_name,
-            c.address      AS company_address,
-            c.gstin        AS company_gstin,
-            c.logo_url     AS company_logo,
-            c.company_seal AS company_seal,
+            c.name           AS company_name,
+            c.address        AS company_address,
+            c.gstin          AS company_gstin,
+            c.logo_url       AS company_logo,
+            c.company_seal   AS company_seal,
+            c.logo_initials  AS logo_initials,
             COALESCE(c.invoice_theme, '{"primary":"#2B6EF5","accent":"#1A56DB","onPrimary":"#FFFFFF"}') AS theme
      FROM templates t
      JOIN companies c ON c.id = t.company_id
@@ -234,12 +235,13 @@ async function buildTemplatePdf(template: Record<string, unknown>): Promise<Buff
     catch { return { primary: '#2B6EF5' } }
   })()
 
-  const initials = companyName
-    .split(' ')
-    .map((w: string) => w[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase()
+  const initials = (template.logo_initials as string | null) ||
+    companyName
+      .split(' ')
+      .map((w: string) => w[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase()
 
   let logoBase64 = ''
   if (template.company_logo) {

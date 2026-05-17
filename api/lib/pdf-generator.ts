@@ -89,15 +89,16 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
       i.discount_amount,
       i.balance_due,
 
-      c.name          AS company_name,
-      c.gstin         AS company_gstin,
-      c.pan_number    AS company_pan,
-      c.upi_id        AS company_upi,
-      c.bank_details  AS bank_details,
-      c.logo_url      AS company_logo,
-      c.invoice_terms AS invoice_terms,
-      c.address       AS company_address,
-      c.company_seal  AS company_seal,
+      c.name            AS company_name,
+      c.gstin           AS company_gstin,
+      c.pan_number      AS company_pan,
+      c.upi_id          AS company_upi,
+      c.bank_details    AS bank_details,
+      c.logo_url        AS company_logo,
+      c.invoice_terms   AS invoice_terms,
+      c.address         AS company_address,
+      c.company_seal    AS company_seal,
+      c.logo_initials   AS logo_initials,
       COALESCE(c.invoice_theme, '{"primary":"#2B6EF5","accent":"#1A56DB","onPrimary":"#FFFFFF"}') AS theme,
 
       cl.name       AS client_name,
@@ -160,12 +161,13 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
     } catch { sealBase64 = '' }
   }
 
-  const initials = (inv.company_name as string)
-    .split(' ')
-    .map((w: string) => w[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase()
+  const initials = (inv.logo_initials as string | null) ||
+    (inv.company_name as string)
+      .split(' ')
+      .map((w: string) => w[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase()
 
   // QR codes
   let upiQR = ''

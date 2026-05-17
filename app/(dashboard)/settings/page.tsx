@@ -41,6 +41,7 @@ interface SettingsCompany {
   invoice_prefix: string | null
   address: string | null
   company_seal: string | null
+  logo_initials: string | null
 }
 
 interface SystemJob {
@@ -617,7 +618,7 @@ function EditCompanySlideOver({
   onClose: () => void
   onSuccess: () => void
 }) {
-  const [form, setForm] = useState({ name: '', type: '', gstin: '', upi_id: '', bank_details_raw: '', address: '', company_seal: '' })
+  const [form, setForm] = useState({ name: '', type: '', gstin: '', upi_id: '', bank_details_raw: '', address: '', company_seal: '', logo_initials: '' })
   const [err, setErr] = useState('')
 
   useEffect(() => {
@@ -630,6 +631,7 @@ function EditCompanySlideOver({
         bank_details_raw: company.bank_details ? JSON.stringify(company.bank_details, null, 2) : '',
         address: company.address ?? '',
         company_seal: company.company_seal ?? '',
+        logo_initials: company.logo_initials ?? '',
       })
       setErr('')
     }
@@ -654,6 +656,7 @@ function EditCompanySlideOver({
           bank_details,
           address: data.address,
           company_seal: data.company_seal,
+          logo_initials: data.logo_initials,
         }),
       }).then(async (r) => {
         if (!r.ok) { const j = await r.json(); throw new Error(j.error || 'Failed') }
@@ -710,6 +713,18 @@ function EditCompanySlideOver({
           rows={3}
           style={{ ...inputStyle, height: 'auto', padding: '8px 10px', resize: 'vertical' }}
         />
+      </Field>
+      <Field label="Logo Initials">
+        <input
+          style={inputStyle}
+          value={form.logo_initials}
+          onChange={(e) => setForm({ ...form, logo_initials: e.target.value })}
+          placeholder="E2"
+          maxLength={3}
+        />
+        <p className="mt-1 text-xs" style={{ color: 'var(--text3)' }}>
+          2–3 characters shown in the logo circle. Leave blank to auto-generate from company name.
+        </p>
       </Field>
       <Field label="Seal Image Path">
         <input

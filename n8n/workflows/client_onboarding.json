@@ -127,11 +127,20 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:18789/send",
+        "url": "http://cbop-app:3000/api/internal/send-email",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ channel: 'email', to: $('Fetch Client').first().json.email, template: 'client_onboarding_email', vars: { client_name: $('Fetch Client').first().json.name, company_name: $('Fetch Client').first().json.company_name, org_name: $('Fetch Client').first().json.org_name || '' } }) }}",
+        "jsonBody": "={{ JSON.stringify({ to: $('Fetch Client').first().json.email, subject: 'Welcome to Etherence — Your Onboarding is Ready', text: 'Hi ' + $('Fetch Client').first().json.name + ',\\n\\nWelcome aboard! Your onboarding has been set up and your dedicated team is ready to begin.\\n\\nIf you have any questions, reply to this email or reach out to your account manager.\\n\\nThank you for choosing Etherence.', html: '<p>Hi ' + $('Fetch Client').first().json.name + ',</p><p>Welcome aboard! Your onboarding has been set up and your dedicated team is ready to begin.</p><p>If you have any questions, reply to this email or reach out to your account manager.</p><p>Thank you for choosing Etherence.</p>' }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-internal-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
         "options": {}
       },
       "id": "co-node-08",

@@ -125,6 +125,31 @@
     {
       "parameters": {
         "method": "POST",
+        "url": "http://cbop-app:3000/api/internal/send-email",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ to: $('Fetch User').first().json.email, subject: 'Welcome to the team — Your Onboarding Tasks are Ready', text: 'Hi ' + $('Fetch User').first().json.name + ',\\n\\nWelcome to the team! Your onboarding checklist has been set up in CBOP.\\n\\nLog in to your dashboard to see your tasks and get started.\\n\\nRole: ' + $('Fetch User').first().json.role.toUpperCase(), html: '<p>Hi ' + $('Fetch User').first().json.name + ',</p><p>Welcome to the team! Your onboarding checklist has been set up in CBOP.</p><p>Log in to your dashboard to see your tasks and get started.</p><p><strong>Role:</strong> ' + $('Fetch User').first().json.role.toUpperCase() + '</p>' }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-internal-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "eo-node-10",
+      "name": "Send Welcome Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
         "url": "http://127.0.0.1:18789/send",
         "sendBody": true,
         "contentType": "json",
@@ -136,7 +161,7 @@
       "name": "Send Welcome Telegram",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1680, 300]
+      "position": [1920, 300]
     },
     {
       "parameters": {
@@ -161,7 +186,7 @@
       "name": "Notify CBOP",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1920, 300]
+      "position": [2160, 300]
     }
   ],
   "pinData": {},
@@ -190,6 +215,9 @@
       "main": [[{"node": "Insert Onboarding Tasks", "type": "main", "index": 0}]]
     },
     "Insert Onboarding Tasks": {
+      "main": [[{"node": "Send Welcome Email", "type": "main", "index": 0}]]
+    },
+    "Send Welcome Email": {
       "main": [[{"node": "Send Welcome Telegram", "type": "main", "index": 0}]]
     },
     "Send Welcome Telegram": {
@@ -200,7 +228,7 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "slice-11",
+  "versionId": "slice-11-email",
   "id": "cbop-employee-onboarding",
   "tags": [{"id": "cbop", "name": "cbop"}]
 }

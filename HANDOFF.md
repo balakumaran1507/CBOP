@@ -1,7 +1,7 @@
 # CBOP HANDOFF
 
 ## Last updated
-2026-05-16 — Slice 13 complete
+2026-05-17 — n8n onboarding workflows: email rerouted through CBOP internal endpoint
 
 ## Completed slices
 ✅ Slice 0 — Infrastructure Setup
@@ -85,10 +85,20 @@ All v2 features are complete and security-hardened.
 9. `npm run db:seed`
 
 ## Files changed this session
-- `api/index.ts` — added `hono/secure-headers` middleware (HSTS, X-Frame-Options, X-Content-Type-Options, CSP), in-memory auth rate limiter (10 req/60s per IP on `/api/auth/*`)
+- `api/index.ts` — added `hono/secure-headers` middleware (HSTS, X-Frame-Options, X-Content-Type-Options, CSP), in-memory auth rate limiter (10 req/60s per IP on `/api/auth/*`); wired internalRoutes
 - `api/routes/agents.ts` — fixed 3 IDOR vulnerabilities: getOverdueInvoices, getTodaysTasks, getPipelineSummary
 - `api/routes/invoices.ts` — invoice remind UPDATE now includes company_id filter (defense-in-depth)
 - `next.config.js` — added `headers()` for X-Frame-Options, X-Content-Type-Options, HSTS, Referrer-Policy, Permissions-Policy on all Next.js routes
+- `api/lib/mailer.ts` — NEW: nodemailer SMTP module; single place all email leaves CBOP; config from SMTP_* env vars
+- `api/lib/auth.ts` — added magicLink plugin (disableSignUp, 15min expiry); sendMagicLink uses mailer.ts (not OpenClaw)
+- `api/lib/auth-client.ts` — added magicLinkClient() plugin
+- `api/routes/internal.ts` — NEW: POST /api/internal/send-email for n8n; protected by N8N_WEBHOOK_SECRET (header: x-internal-secret); never expose externally
+- `app/(auth)/login/page.tsx` — added "Forgot password?" link
+- `app/(auth)/forgot-password/page.tsx` — NEW: email input → authClient.signIn.magicLink → confirmation state
+- `CLAUDE.md` — updated constraints: Telegram/WhatsApp via OpenClaw only; email via mailer.ts only
+- `n8n/workflows/client_onboarding.json` — co-node-08: replaced OpenClaw /send (channel: email) with POST /api/internal/send-email; inline subject/text/html; header x-internal-secret
+- `n8n/workflows/employee_onboarding.json` — added eo-node-10 "Send Welcome Email" (POST /api/internal/send-email, x-internal-secret); chained before Telegram node; employee now receives welcome email + Telegram
+- `api/routes/internal.ts` — fixed header check: x-webhook-secret → x-internal-secret (matches workflow spec)
 
 ## Failed attempts — do not retry
 - Mapping better-auth to our `users` table via `advanced.database` — v0.8 requires Kysely dialect.
@@ -125,10 +135,10 @@ All v2 features are complete and security-hardened.
 - **Auth rate limiter is in-memory** — resets on app restart. Acceptable for 3-user homeserver; upgrade to Redis-backed if attack surface grows.
 - **Uptime Kuma monitors** — configure `/api/health` endpoint monitor and TCP port check for postgres. Manual step in Uptime Kuma UI.
 
-## Credentials (dev)
-- bala@etherence.com / cbop-bala-2026 (CEO — all companies)
-- nabeelah@etherence.com / cbop-nabeelah-2026 (COO — all companies)
-- guru@etherence.com / cbop-guru-2026 (CTO — Etherence IT only)
+## Credentials
+- founders@cybercomctf.com / T6Y8F9juH6mYVn (CEO — all companies)
+- nabeelahanjum.wrk@gmail.com / hNuPgNmY7iUmtG (COO — all companies)
+- guru2006may@gmail.com / sv27FCpRUc4FbF (CTO — Etherence IT only)
 
 ## OpenClaw context
 - URL: http://127.0.0.1:18789
@@ -161,9 +171,12 @@ docker compose up -d postgres n8n
 ## Next session
 CBOP v2 is complete. All 13 slices delivered. Release tagged v2.0.0.
 
+Post-release testing/fixes in progress.
+
 Possible follow-up work:
+- Test forgot password end-to-end: /forgot-password → email arrives → magic link → /dashboard
 - Uptime Kuma: configure `/api/health` monitor (manual in Uptime Kuma UI)
-- n8n: toggle all 7 workflows to Active, set error_handler as global error workflow
+- n8n: toggle all 7 workflows to Active, set error_handler as global error workflow; re-import client_onboarding + employee_onboarding JSONs (email nodes updated)
 - OpenClaw: register cbop_control tool URLs in agent config
 - Fill TELEGRAM_NABEELAH_CHAT_ID and TELEGRAM_GURU_CHAT_ID in .env when available
 - Add morning_briefing daily n8n cron workflow (currently only fires via Monday reporting)

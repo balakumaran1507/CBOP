@@ -1,5 +1,6 @@
 import puppeteer from 'puppeteer'
 import QRCode from 'qrcode'
+import path from 'path'
 import { query } from './db'
 
 // ── Amount in words (Indian numbering system) ─────────────────────────────────
@@ -120,6 +121,11 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   const theme = typeof inv.theme === 'string' ? JSON.parse(inv.theme) : inv.theme
   const bank  = typeof inv.bank_details === 'string' ? JSON.parse(inv.bank_details) : inv.bank_details
 
+  // theme.primary is DB-sourced (companies.invoice_theme, admin-editable) and is
+  // interpolated directly into <style> block CSS below - escape it so a crafted
+  // value can't break out of the style tag (e.g. "...} </style><script>...").
+  const themePrimary = esc(String(theme?.primary || '#2B6EF5'))
+
   // -- Computed values
   const taxableAmount = parseFloat(String(inv.amount))
   const gstAmount     = parseFloat(String(inv.gst_amount))
@@ -137,27 +143,41 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   const balanceDue    = parseFloat(String(inv.balance_due || total))
 
   const fmt     = (n: number) => '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  const fmtDate = (d: any) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
+  const fmtDate = (d: any) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'
   const placeOfSupply = 'Tamil Nadu (33)'
 
-  // Logo: convert local path to base64 data URL
+  // Logo / seal: resolve to a safe path inside uploads/ - never use raw DB value as fs path
+  const UPLOADS_DIR = path.join(process.cwd(), 'uploads')
+  function safeUploadsPath(urlOrPath: string | null | undefined): string | null {
+    if (!urlOrPath) return null
+    // Strip /api/uploads/ prefix if present, then resolve inside UPLOADS_DIR
+    const rel = urlOrPath.replace(/^\/api\/uploads\//, '').replace(/^\//, '')
+    const resolved = path.resolve(UPLOADS_DIR, rel)
+    if (!resolved.startsWith(UPLOADS_DIR + path.sep) && resolved !== UPLOADS_DIR) return null
+    return resolved
+  }
+
   let logoBase64 = ''
-  if (inv.company_logo) {
+  const logoPath = safeUploadsPath(inv.company_logo as string | null)
+  if (logoPath) {
     try {
       const fs = await import('fs/promises')
-      const buf = await fs.readFile(inv.company_logo)
-      const ext = (inv.company_logo as string).split('.').pop()?.toLowerCase() || 'png'
-      logoBase64 = `data:image/${ext};base64,${buf.toString('base64')}`
+      const buf = await fs.readFile(logoPath)
+      const ext = logoPath.split('.').pop()?.toLowerCase() || 'png'
+      const mime = ext === 'svg' ? 'image/svg+xml' : `image/${ext}`
+      logoBase64 = `data:${mime};base64,${buf.toString('base64')}`
     } catch { logoBase64 = '' }
   }
 
   let sealBase64 = ''
-  if (inv.company_seal) {
+  const sealPath = safeUploadsPath(inv.company_seal as string | null)
+  if (sealPath) {
     try {
       const fs = await import('fs/promises')
-      const buf = await fs.readFile(inv.company_seal)
-      const ext = (inv.company_seal as string).split('.').pop()?.toLowerCase() || 'png'
-      sealBase64 = `data:image/${ext};base64,${buf.toString('base64')}`
+      const buf = await fs.readFile(sealPath)
+      const ext = sealPath.split('.').pop()?.toLowerCase() || 'png'
+      const mime = ext === 'svg' ? 'image/svg+xml' : `image/${ext}`
+      sealBase64 = `data:${mime};base64,${buf.toString('base64')}`
     } catch { sealBase64 = '' }
   }
 
@@ -181,11 +201,12 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   const terms = (inv.invoice_terms as string | null) ||
     `1. Payment due within 14 days of invoice date.\n2. Late payments subject to 1.5% monthly interest.\n3. Disputes subject to Chennai jurisdiction.\n4. This is a system-generated tax invoice.`
 
-  // -- HTML template (inline CSS only — Puppeteer does not load external stylesheets)
+  // -- HTML template (inline CSS only - Puppeteer does not load external stylesheets)
   const html = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src https://fonts.googleapis.com https://fonts.gstatic.com; img-src data:;">
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
@@ -229,7 +250,7 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
     width: 52px;
     height: 52px;
     border-radius: 50%;
-    background: ${theme.primary};
+    background: ${themePrimary};
     display: flex;
     align-items: center;
     justify-content: center;
@@ -404,7 +425,7 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   }
 
   table.items thead th {
-    background: ${theme.primary};
+    background: ${themePrimary};
     color: #FFFFFF;
     font-size: 8pt;
     font-weight: 600;
@@ -555,7 +576,7 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
     margin-bottom: 20px;
     padding: 8px 12px;
     background: #F8F8F8;
-    border-left: 3px solid ${theme.primary};
+    border-left: 3px solid ${themePrimary};
   }
 
   .words-row strong {
@@ -725,15 +746,15 @@ ${isPaid ? '<div class="paid-stamp">PAID</div>' : ''}
     <div class="logo-circle">
       ${logoBase64
         ? `<img src="${logoBase64}" alt="logo" />`
-        : `<span class="initials">${initials}</span>`
+        : `<span class="initials">${esc(initials)}</span>`
       }
     </div>
     <div class="company-info">
-      <div class="company-name">${inv.company_name}</div>
-      ${inv.company_address ? `<div class="company-detail">${inv.company_address}</div>` : ''}
+      <div class="company-name">${esc(inv.company_name)}</div>
+      ${inv.company_address ? `<div class="company-detail">${esc(inv.company_address)}</div>` : ''}
       <div class="company-detail">
-        ${inv.company_gstin ? `GSTIN: ${inv.company_gstin}` : ''}
-        ${inv.company_pan ? ` &nbsp;·&nbsp; PAN: ${inv.company_pan}` : ''}
+        ${inv.company_gstin ? `GSTIN: ${esc(inv.company_gstin)}` : ''}
+        ${inv.company_pan ? ` &nbsp;·&nbsp; PAN: ${esc(inv.company_pan)}` : ''}
       </div>
     </div>
   </div>
@@ -751,12 +772,12 @@ ${isPaid ? '<div class="paid-stamp">PAID</div>' : ''}
 <div class="meta-section">
   <div class="bill-to-block">
     <div class="block-label">Bill To</div>
-    <div class="bill-to-name">${inv.client_name}</div>
-    ${inv.client_org ? `<div class="bill-to-detail">${inv.client_org}</div>` : ''}
-    ${inv.client_address ? `<div class="bill-to-detail">${inv.client_address}</div>` : ''}
-    ${inv.client_email ? `<div class="bill-to-detail">${inv.client_email}</div>` : ''}
-    ${inv.client_phone ? `<div class="bill-to-detail">${inv.client_phone}</div>` : ''}
-    ${inv.client_gstin ? `<div class="bill-to-gstin">GSTIN: ${inv.client_gstin}</div>` : ''}
+    <div class="bill-to-name">${esc(inv.client_name)}</div>
+    ${inv.client_org ? `<div class="bill-to-detail">${esc(inv.client_org)}</div>` : ''}
+    ${inv.client_address ? `<div class="bill-to-detail">${esc(inv.client_address)}</div>` : ''}
+    ${inv.client_email ? `<div class="bill-to-detail">${esc(inv.client_email)}</div>` : ''}
+    ${inv.client_phone ? `<div class="bill-to-detail">${esc(inv.client_phone)}</div>` : ''}
+    ${inv.client_gstin ? `<div class="bill-to-gstin">GSTIN: ${esc(inv.client_gstin)}</div>` : ''}
   </div>
   <div class="invoice-details-block">
     <div class="detail-row">
@@ -778,7 +799,7 @@ ${isPaid ? '<div class="paid-stamp">PAID</div>' : ''}
     ${inv.po_number ? `
     <div class="detail-row">
       <span class="detail-label">P.O. #</span>
-      <span class="detail-value">${inv.po_number}</span>
+      <span class="detail-value">${esc(inv.po_number)}</span>
     </div>` : ''}
   </div>
 </div>
@@ -789,7 +810,7 @@ ${isPaid ? '<div class="paid-stamp">PAID</div>' : ''}
 <div class="compliance-strip">
   <span>GST Type: <strong>${isCGST ? 'CGST + SGST' : 'IGST'}</strong></span>
   <span>Reverse Charge: <strong>${inv.reverse_charge ? 'Yes' : 'No'}</strong></span>
-  ${inv.e_way_bill_no ? `<span>E-Way Bill: <strong>${inv.e_way_bill_no}</strong></span>` : ''}
+  ${inv.e_way_bill_no ? `<span>E-Way Bill: <strong>${esc(inv.e_way_bill_no)}</strong></span>` : ''}
 </div>
 
 <!-- ═══ LINE ITEMS ═══ -->
@@ -815,9 +836,9 @@ ${isPaid ? '<div class="paid-stamp">PAID</div>' : ''}
     <tr>
       <td class="item-num">1</td>
       <td class="item-desc">
-        <div class="item-title">${inv.service_description || 'Professional Services'}</div>
+        <div class="item-title">${esc(inv.service_description) || 'Professional Services'}</div>
       </td>
-      <td class="item-num-right" style="text-align:center;color:#888888;font-size:8pt;">${inv.hsn_code || '998314'}</td>
+      <td class="item-num-right" style="text-align:center;color:#888888;font-size:8pt;">${esc(inv.hsn_code) || '998314'}</td>
       <td class="item-num-right">${qty.toFixed(2)}</td>
       <td class="item-num-right">${fmt(rate)}</td>
       ${isCGST ? `
@@ -889,11 +910,11 @@ ${isPaid ? '<div class="paid-stamp">PAID</div>' : ''}
     <div class="payment-details">
       <div class="block-label">Payment Options</div>
       ${bank ? `
-      <div class="payment-line">Bank: <strong>${bank.bank_name}</strong></div>
-      <div class="payment-line">A/C Name: <strong>${bank.account_name}</strong></div>
-      <div class="payment-line">A/C No: <strong>${bank.account_no}</strong> &nbsp;|&nbsp; IFSC: <strong>${bank.ifsc_code}</strong></div>
+      <div class="payment-line">Bank: <strong>${esc(bank.bank_name)}</strong></div>
+      <div class="payment-line">A/C Name: <strong>${esc(bank.account_name)}</strong></div>
+      <div class="payment-line">A/C No: <strong>${esc(bank.account_no)}</strong> &nbsp;|&nbsp; IFSC: <strong>${esc(bank.ifsc_code)}</strong></div>
       ` : ''}
-      ${inv.company_upi ? `<div class="payment-line">UPI: <strong>${inv.company_upi}</strong></div>` : ''}
+      ${inv.company_upi ? `<div class="payment-line">UPI: <strong>${esc(inv.company_upi)}</strong></div>` : ''}
       <div class="payment-line" style="margin-top:4px;color:#AAAAAA;font-size:7.5pt;">
         Payment due within 14 days of invoice date.
       </div>
@@ -918,16 +939,16 @@ ${isPaid ? '<div class="paid-stamp">PAID</div>' : ''}
     ${inv.notes ? `
     <div class="notes-block">
       <div class="block-label">Notes</div>
-      <div class="notes-text">${inv.notes}</div>
+      <div class="notes-text">${esc(inv.notes)}</div>
     </div>` : '<div class="notes-block"></div>'}
 
     <div class="terms-block">
       <div class="block-label">Terms &amp; Conditions</div>
-      <div class="terms-text">${terms}</div>
+      <div class="terms-text">${esc(terms)}</div>
     </div>
 
     <div class="signature-block">
-      <div class="for-company">For ${inv.company_name}</div>
+      <div class="for-company">For ${esc(inv.company_name)}</div>
       <div class="signature-space">
         ${sealBase64 ? `<img src="${sealBase64}" alt="seal" />` : ''}
       </div>
@@ -941,13 +962,19 @@ ${isPaid ? '<div class="paid-stamp">PAID</div>' : ''}
 <!-- ═══ AUDIT FOOTER ═══ -->
 <div class="audit-footer">
   <span>Generated: ${new Date().toISOString()} · CBOP v2</span>
-  <span>${inv.invoice_no} · ${inv.company_gstin || 'GSTIN Applied For'}</span>
+  <span>${esc(inv.invoice_no)} · ${esc(inv.company_gstin) || 'GSTIN Applied For'}</span>
 </div>
 
 </body>
 </html>`
 
   // -- Puppeteer render
+  // --no-sandbox is required here: Chromium's sandbox needs user-namespace syscalls
+  // that this container's seccomp profile blocks even under the non-root `nextjs`
+  // user (see Dockerfile). Removing it makes Puppeteer fail to launch rather than
+  // run sandboxed. The actual backstop is that every DB-sourced string reaching this
+  // template goes through esc() (see the client_name/notes/po_number/service_description
+  // interpolations above) — verified during the 2026-07-27 audit fix pass.
   const browser = await puppeteer.launch({
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],

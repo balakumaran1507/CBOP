@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { requireAuth } from '../middleware/require-auth'
 import { requireRole } from '../middleware/require-role'
-import { query } from '../lib/db'
+import { query, transaction } from '../lib/db'
 import { sendViaOpenClaw } from '../lib/openclaw'
 import { buildInvoicePdf } from '../lib/pdf-generator'
 import '../lib/hono-vars'
@@ -11,10 +11,16 @@ const app = new Hono()
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function generateInvoiceNumber(companyId: string, prefix: string): Promise<string> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function generateInvoiceNumber(client: { query: (text: string, params?: any[]) => Promise<any> }, companyId: string, prefix: string): Promise<string> {
   const year = new Date().getFullYear()
   const like = `${prefix}-${year}-%`
-  const result = await query(
+  // Serializes concurrent invoice-number generation for this company+year (held for
+  // the lifetime of the enclosing transaction) so two concurrent POSTs can never
+  // compute the same next sequence number - the prior SELECT-MAX-then-INSERT was a
+  // plain race with no locking.
+  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`invoice_seq:${companyId}:${year}`])
+  const result = await client.query(
     `SELECT COALESCE(MAX(CAST(SPLIT_PART(invoice_no, '-', 3) AS INTEGER)), 0) AS max_seq
      FROM sales_invoices
      WHERE company_id = $1 AND invoice_no LIKE $2`,
@@ -30,7 +36,7 @@ function formatDate(d: Date): string {
 
 // ── GET /api/invoices ─────────────────────────────────────────────────────────
 
-app.get('/api/invoices', requireAuth, requireRole('ceo', 'coo'), async (c) => {
+app.get('/api/invoices', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const companyIds = c.get('companyIds') as string[]
   const showAll    = c.req.query('all') === 'true'
 
@@ -63,7 +69,7 @@ app.get('/api/invoices', requireAuth, requireRole('ceo', 'coo'), async (c) => {
 
 // ── POST /api/invoices ────────────────────────────────────────────────────────
 
-app.post('/api/invoices', requireAuth, requireRole('ceo', 'coo'), async (c) => {
+app.post('/api/invoices', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const companyIds = c.get('companyIds') as string[]
   const body       = await c.req.json()
   const { company_id, client_id, deal_id, amount, gst_type, due_date, service_description, notes } = body
@@ -88,24 +94,35 @@ app.post('/api/invoices', requireAuth, requireRole('ceo', 'coo'), async (c) => {
   )
   if (companyResult.rows.length === 0) return c.json({ error: 'Company not found' }, 404)
 
-  const prefix    = companyResult.rows[0].invoice_prefix as string
-  const invoiceNo = await generateInvoiceNumber(company_id, prefix)
+  const prefix = companyResult.rows[0].invoice_prefix as string
 
-  const result = await query(
-    `INSERT INTO sales_invoices
-       (company_id, client_id, deal_id, invoice_no, amount, gst_type, gst_amount, total,
-        due_date, supply_date, rate, status, service_description, notes)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_DATE, $5, 'draft', $10, $11)
-     RETURNING id, invoice_no, amount, gst_type, gst_amount, total, due_date, status, created_at`,
-    [company_id, client_id, deal_id || null, invoiceNo, amt, gst_type, gstAmount, total, due_date, service_description || null, notes || null]
-  )
-
-  return c.json({ invoice: result.rows[0] }, 201)
+  try {
+    const invoice = await transaction(async (client) => {
+      const invoiceNo = await generateInvoiceNumber(client, company_id, prefix)
+      const result = await client.query(
+        `INSERT INTO sales_invoices
+           (company_id, client_id, deal_id, invoice_no, amount, gst_type, gst_amount, total,
+            due_date, supply_date, rate, status, service_description, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_DATE, $5, 'draft', $10, $11)
+         RETURNING id, invoice_no, amount, gst_type, gst_amount, total, due_date, status, created_at`,
+        [company_id, client_id, deal_id || null, invoiceNo, amt, gst_type, gstAmount, total, due_date, service_description || null, notes || null]
+      )
+      return result.rows[0]
+    })
+    return c.json({ invoice }, 201)
+  } catch (err) {
+    // Defense in depth - the advisory lock in generateInvoiceNumber should make this
+    // unreachable, but a unique-constraint hit on invoice_no is a clean 409, not a 500.
+    if ((err as { code?: string })?.code === '23505') {
+      return c.json({ error: 'Invoice number collision - please retry.' }, 409)
+    }
+    throw err
+  }
 })
 
 // ── PATCH /api/invoices/:id ───────────────────────────────────────────────────
 
-app.patch('/api/invoices/:id', requireAuth, requireRole('ceo', 'coo'), async (c) => {
+app.patch('/api/invoices/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const invoiceId  = c.req.param('id')
   const companyIds = c.get('companyIds') as string[]
   const body       = await c.req.json()
@@ -141,7 +158,7 @@ app.patch('/api/invoices/:id', requireAuth, requireRole('ceo', 'coo'), async (c)
 
 // ── GET /api/invoices/:id/pdf ─────────────────────────────────────────────────
 
-app.get('/api/invoices/:id/pdf', requireAuth, requireRole('ceo', 'coo'), async (c) => {
+app.get('/api/invoices/:id/pdf', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const invoiceId  = c.req.param('id') as string
   const companyIds = c.get('companyIds') as string[]
 
@@ -172,7 +189,7 @@ app.get('/api/invoices/:id/pdf', requireAuth, requireRole('ceo', 'coo'), async (
 
 // ── POST /api/invoices/:id/remind ─────────────────────────────────────────────
 
-app.post('/api/invoices/:id/remind', requireAuth, requireRole('ceo', 'coo'), async (c) => {
+app.post('/api/invoices/:id/remind', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const invoiceId  = c.req.param('id')
   const companyIds = c.get('companyIds') as string[]
   const userId     = c.get('userId') as string
@@ -223,7 +240,7 @@ app.post('/api/invoices/:id/remind', requireAuth, requireRole('ceo', 'coo'), asy
     return c.json({ success: true })
   } catch (err) {
     console.error('Reminder send failed:', err)
-    return c.json({ error: 'Failed to send reminder — OpenClaw unreachable' }, 502)
+    return c.json({ error: 'Failed to send reminder - OpenClaw unreachable' }, 502)
   }
 })
 

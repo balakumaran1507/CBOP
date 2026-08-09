@@ -7,21 +7,15 @@ interface StatCardProps {
 
 export function StatCard({ label, value, sub, valueColor }: StatCardProps) {
   return (
-    <div
-      className="bg-white rounded p-5"
-      style={{ border: '1px solid var(--border)', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}
-    >
-      <p className="text-xs mb-2 uppercase tracking-wide" style={{ color: 'var(--text2)', fontFamily: 'var(--font-inter), sans-serif', letterSpacing: '0.06em' }}>
+    <div className="bg-card border border-border shadow-sm p-6 rounded-none font-sans relative hover:border-text1 transition-colors">
+      <p className="text-[12px] font-bold text-text2 uppercase tracking-wider mb-2">
         {label}
       </p>
-      <p
-        className="text-2xl font-semibold"
-        style={{ fontFamily: 'var(--font-ibm-plex-mono), monospace', color: valueColor || 'var(--text1)' }}
-      >
+      <p className={`font-mono text-3xl font-bold m-0 tracking-tight ${valueColor || 'text-text1'}`}>
         {value}
       </p>
       {sub && (
-        <p className="text-xs mt-1" style={{ color: 'var(--text3)', fontFamily: 'var(--font-inter), sans-serif' }}>
+        <p className="text-[12px] mt-2 text-text3 font-medium">
           {sub}
         </p>
       )}
@@ -31,12 +25,9 @@ export function StatCard({ label, value, sub, valueColor }: StatCardProps) {
 
 export function StatCardSkeleton() {
   return (
-    <div
-      className="bg-white rounded p-5"
-      style={{ border: '1px solid var(--border)', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}
-    >
-      <div className="h-3 w-24 rounded animate-pulse mb-3" style={{ backgroundColor: '#E0E3E3' }} />
-      <div className="h-8 w-16 rounded animate-pulse" style={{ backgroundColor: '#E0E3E3' }} />
+    <div className="bg-card border border-border p-6 shadow-sm rounded-none">
+      <div className="h-3 w-24 rounded-sm bg-bg animate-pulse mb-4" />
+      <div className="h-8 w-20 rounded-sm bg-bg animate-pulse" />
     </div>
   )
 }

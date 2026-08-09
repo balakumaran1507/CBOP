@@ -1,5 +1,9 @@
+# db backups (contain real client/financial data — never commit)
+/backups
+
 # dependencies
 /node_modules
+accounting-app/node_modules
 /.pnp
 .pnp.js
 
@@ -8,6 +12,7 @@
 
 # next.js
 /.next/
+accounting-app/.next/
 /out/
 
 # production
@@ -47,3 +52,7 @@ docker-compose.override.yml
 # Database
 *.sql.gz
 /backups
+
+# Runtime data — user uploads and generated PDFs
+/uploads/
+/public/generated-pdfs/

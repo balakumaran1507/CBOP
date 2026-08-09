@@ -22,9 +22,7 @@ const config: Config = {
         blue: '#0073BB',
       },
       fontFamily: {
-        syne: ['Syne', 'sans-serif'],
-        inter: ['Inter', 'sans-serif'],
-        mono: ['IBM Plex Mono', 'monospace'],
+        sans: ['var(--font-space-grotesk)', 'sans-serif'],
       },
     },
   },

@@ -1,12 +1,16 @@
 import { Hono } from 'hono'
 import { requireAuth } from '../middleware/require-auth'
 import { requireRole } from '../middleware/require-role'
-import { query } from '../lib/db'
+import { query, transaction } from '../lib/db'
+import { notFound, validationError } from '../lib/route-utils'
 import '../lib/hono-vars'
 
 const app = new Hono()
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+class NotFoundError extends Error {}
+class AlreadyConvertedError extends Error {}
 
 async function fireN8nWebhook(path: string, body: Record<string, unknown>): Promise<void> {
   const n8nUrl = process.env.N8N_URL
@@ -31,7 +35,7 @@ async function fireN8nWebhook(path: string, body: Record<string, unknown>): Prom
 
 // ── GET /api/leads ────────────────────────────────────────────────────────────
 
-app.get('/api/leads', requireAuth, requireRole('ceo', 'coo'), async (c) => {
+app.get('/api/leads', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const companyIds = c.get('companyIds') as string[]
 
   const result = await query(
@@ -54,14 +58,14 @@ app.get('/api/leads', requireAuth, requireRole('ceo', 'coo'), async (c) => {
 
 // ── POST /api/leads ───────────────────────────────────────────────────────────
 
-app.post('/api/leads', requireAuth, requireRole('ceo', 'coo'), async (c) => {
+app.post('/api/leads', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const companyIds = c.get('companyIds') as string[]
   const userId     = c.get('userId') as string
   const body       = await c.req.json()
   const { company_id, name, email, phone, org_name, source, badge, notes, owner_id } = body
 
-  if (!company_id) return c.json({ error: 'company_id is required' }, 400)
-  if (!name)       return c.json({ error: 'name is required' }, 400)
+  if (!company_id) return validationError(c, 'company_id is required')
+  if (!name)       return validationError(c, 'name is required')
   if (!companyIds.includes(company_id)) return c.json({ error: 'Forbidden: company not in scope' }, 403)
 
   const result = await query(
@@ -86,7 +90,7 @@ app.post('/api/leads', requireAuth, requireRole('ceo', 'coo'), async (c) => {
 
 // ── PATCH /api/leads/:id ──────────────────────────────────────────────────────
 
-app.patch('/api/leads/:id', requireAuth, requireRole('ceo', 'coo'), async (c) => {
+app.patch('/api/leads/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const leadId     = c.req.param('id') as string
   const companyIds = c.get('companyIds') as string[]
   const body       = await c.req.json()
@@ -116,7 +120,7 @@ app.patch('/api/leads/:id', requireAuth, requireRole('ceo', 'coo'), async (c) =>
     ]
   )
 
-  if (result.rows.length === 0) return c.json({ error: 'Lead not found' }, 404)
+  if (result.rows.length === 0) return notFound(c, 'Lead')
 
   // Trigger lead scoring in n8n (fire-and-forget)
   fireN8nWebhook('lead-updated', { lead_id: leadId })
@@ -126,73 +130,89 @@ app.patch('/api/leads/:id', requireAuth, requireRole('ceo', 'coo'), async (c) =>
 
 // ── POST /api/leads/:id/convert-to-deal ───────────────────────────────────────
 
-app.post('/api/leads/:id/convert-to-deal', requireAuth, requireRole('ceo', 'coo'), async (c) => {
+app.post('/api/leads/:id/convert-to-deal', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const leadId     = c.req.param('id') as string
   const companyIds = c.get('companyIds') as string[]
   const userId     = c.get('userId') as string
   const body       = await c.req.json()
   const { deal_name, value, service_type } = body
 
-  // Fetch lead + verify scope
-  const leadResult = await query(
-    `SELECT id, company_id, name, email, phone, org_name, owner_id, status
-     FROM sales_leads WHERE id = $1 AND company_id = ANY($2)`,
-    [leadId, companyIds]
-  )
-  if (leadResult.rows.length === 0) return c.json({ error: 'Lead not found' }, 404)
-
-  const lead = leadResult.rows[0]
-  if (lead.status === 'converted') return c.json({ error: 'Lead already converted' }, 409)
-
-  // Upsert client — match by email within same company, else create new
+  // Everything below is one atomic operation - client upsert, deal creation, and
+  // marking the lead converted must all succeed or all roll back, otherwise a
+  // failure partway through leaves an orphan client with no deal and a lead stuck
+  // un-converted. FOR UPDATE on the lead row also serializes a concurrent double
+  // conversion of the same lead into a clean 409 instead of a duplicate deal.
+  let deal: { id: string; name: string; stage: string }
   let clientId: string
   let isNewClient = false
 
-  if (lead.email) {
-    const existing = await query(
-      `SELECT id FROM sales_clients WHERE company_id = $1 AND email = $2 LIMIT 1`,
-      [lead.company_id, lead.email]
-    )
-    if (existing.rows.length > 0) {
-      clientId = existing.rows[0].id as string
-    } else {
-      isNewClient = true
-    }
-  } else {
-    isNewClient = true
+  try {
+    const txResult = await transaction(async (client) => {
+      const leadResult = await client.query(
+        `SELECT id, company_id, name, email, phone, org_name, owner_id, status
+         FROM sales_leads WHERE id = $1 AND company_id = ANY($2) FOR UPDATE`,
+        [leadId, companyIds]
+      )
+      if (leadResult.rows.length === 0) throw new NotFoundError()
+
+      const lead = leadResult.rows[0]
+      if (lead.status === 'converted') throw new AlreadyConvertedError()
+
+      // Upsert client - match by email within same company, else create new
+      let txClientId: string
+      let txIsNewClient = false
+
+      if (lead.email) {
+        const existing = await client.query(
+          `SELECT id FROM sales_clients WHERE company_id = $1 AND email = $2 LIMIT 1`,
+          [lead.company_id, lead.email]
+        )
+        if (existing.rows.length > 0) {
+          txClientId = existing.rows[0].id as string
+        } else {
+          txIsNewClient = true
+        }
+      } else {
+        txIsNewClient = true
+      }
+
+      if (txIsNewClient) {
+        const newClient = await client.query(
+          `INSERT INTO sales_clients (company_id, name, email, phone, org_name, added_by)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id`,
+          [lead.company_id, lead.name, lead.email || null, lead.phone || null, lead.org_name || null, userId]
+        )
+        txClientId = newClient.rows[0].id as string
+      }
+
+      // Create deal
+      const name = deal_name || `${lead.org_name || lead.name} Deal`
+      const dealResult = await client.query(
+        `INSERT INTO sales_deals (company_id, lead_id, client_id, name, value, service_type, stage, owner_id)
+         VALUES ($1, $2, $3, $4, $5, $6, 'lead', $7)
+         RETURNING id, name, stage`,
+        [
+          lead.company_id, leadId, txClientId!, name,
+          value ? parseFloat(String(value)) : null,
+          service_type || null,
+          lead.owner_id || userId,
+        ]
+      )
+
+      // Mark lead converted
+      await client.query(`UPDATE sales_leads SET status = 'converted' WHERE id = $1`, [leadId])
+
+      return { deal: dealResult.rows[0], clientId: txClientId!, isNewClient: txIsNewClient }
+    })
+    deal = txResult.deal
+    clientId = txResult.clientId
+    isNewClient = txResult.isNewClient
+  } catch (err) {
+    if (err instanceof NotFoundError) return c.json({ error: 'Lead not found' }, 404)
+    if (err instanceof AlreadyConvertedError) return c.json({ error: 'Lead already converted' }, 409)
+    throw err
   }
-
-  if (isNewClient) {
-    const newClient = await query(
-      `INSERT INTO sales_clients (company_id, name, email, phone, org_name, added_by)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id`,
-      [lead.company_id, lead.name, lead.email || null, lead.phone || null, lead.org_name || null, userId]
-    )
-    clientId = newClient.rows[0].id as string
-  }
-
-  // Create deal
-  const name = deal_name || `${lead.org_name || lead.name} Deal`
-  const dealResult = await query(
-    `INSERT INTO sales_deals (company_id, lead_id, client_id, name, value, service_type, stage, owner_id)
-     VALUES ($1, $2, $3, $4, $5, $6, 'lead', $7)
-     RETURNING id, name, stage`,
-    [
-      lead.company_id, leadId, clientId!, name,
-      value ? parseFloat(String(value)) : null,
-      service_type || null,
-      lead.owner_id || userId,
-    ]
-  )
-
-  const deal = dealResult.rows[0]
-
-  // Mark lead converted
-  await query(
-    `UPDATE sales_leads SET status = 'converted' WHERE id = $1`,
-    [leadId]
-  )
 
   // Fire n8n webhooks (fire-and-forget)
   fireN8nWebhook('lead-updated', { lead_id: leadId })

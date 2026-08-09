@@ -3,11 +3,12 @@ import { requireAuth } from '../middleware/require-auth'
 import { requireRole } from '../middleware/require-role'
 import { query } from '../lib/db'
 import { triggerAgent, sendViaOpenClaw } from '../lib/openclaw'
+import { notFound, validationError } from '../lib/route-utils'
 import '../lib/hono-vars'
 
 const app = new Hono()
 
-// ── Supporting endpoints (auth only — used by form dropdowns in other slices too) ────────────────
+// ── Supporting endpoints (auth only - used by form dropdowns in other slices too) ────────────────
 
 app.get('/api/users', requireAuth, async (c) => {
   const result = await query(
@@ -19,7 +20,7 @@ app.get('/api/users', requireAuth, async (c) => {
 app.get('/api/companies', requireAuth, async (c) => {
   const companyIds = c.get('companyIds') as string[]
   const result = await query(
-    `SELECT id, name, invoice_prefix FROM companies WHERE id = ANY($1) ORDER BY name ASC`,
+    `SELECT id, name, invoice_prefix, logo_url, address, gstin FROM companies WHERE id = ANY($1) ORDER BY name ASC`,
     [companyIds]
   )
   return c.json({ companies: result.rows })
@@ -27,7 +28,7 @@ app.get('/api/companies', requireAuth, async (c) => {
 
 // ── Sales routes: CEO + COO only ─────────────────────────────────────────────────────────────────
 
-app.get('/api/deals', requireAuth, requireRole('ceo', 'coo'), async (c) => {
+app.get('/api/deals', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const companyIds = c.get('companyIds') as string[]
 
   const result = await query(
@@ -48,14 +49,14 @@ app.get('/api/deals', requireAuth, requireRole('ceo', 'coo'), async (c) => {
   return c.json({ deals: result.rows })
 })
 
-app.post('/api/deals', requireAuth, requireRole('ceo', 'coo'), async (c) => {
+app.post('/api/deals', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const companyIds = c.get('companyIds') as string[]
   const body = await c.req.json()
   const { name, company_id, value, stage, service_type, owner_id } = body
 
-  if (!name?.trim()) return c.json({ error: 'name is required' }, 400)
-  if (!company_id)   return c.json({ error: 'company_id is required' }, 400)
-  if (!stage)        return c.json({ error: 'stage is required' }, 400)
+  if (!name?.trim()) return validationError(c, 'name is required')
+  if (!company_id)   return validationError(c, 'company_id is required')
+  if (!stage)        return validationError(c, 'stage is required')
   if (!companyIds.includes(company_id)) return c.json({ error: 'Forbidden: company not in scope' }, 403)
 
   const result = await query(
@@ -68,7 +69,7 @@ app.post('/api/deals', requireAuth, requireRole('ceo', 'coo'), async (c) => {
   return c.json({ deal: result.rows[0] }, 201)
 })
 
-app.patch('/api/deals/:id', requireAuth, requireRole('ceo', 'coo'), async (c) => {
+app.patch('/api/deals/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const dealId = c.req.param('id')
   const companyIds = c.get('companyIds') as string[]
   const body = await c.req.json()
@@ -86,20 +87,43 @@ app.patch('/api/deals/:id', requireAuth, requireRole('ceo', 'coo'), async (c) =>
     [name || null, value ?? null, service_type || null, owner_id || null, dealId, companyIds]
   )
 
-  if (result.rows.length === 0) return c.json({ error: 'Deal not found' }, 404)
+  if (result.rows.length === 0) return notFound(c, 'Deal')
   return c.json({ success: true })
 })
 
-app.patch('/api/deals/:id/stage', requireAuth, requireRole('ceo', 'coo'), async (c) => {
+app.patch('/api/deals/:id/stage', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const dealId = c.req.param('id')
   const companyIds = c.get('companyIds') as string[]
   const body = await c.req.json()
-  const { stage, lost_reason } = body
+  const { stage, lost_reason, reopen } = body
 
   const validStages = ['lead', 'proposal', 'negotiation', 'closed_won', 'closed_lost']
-  if (!validStages.includes(stage)) return c.json({ error: 'Invalid stage' }, 400)
+  if (!validStages.includes(stage)) return validationError(c, 'Invalid stage')
   if (stage === 'closed_lost' && !lost_reason?.trim()) {
-    return c.json({ error: 'lost_reason is required when marking a deal as lost' }, 400)
+    return validationError(c, 'lost_reason is required when marking a deal as lost')
+  }
+
+  const current = await query(
+    `SELECT stage, owner_id FROM sales_deals WHERE id = $1 AND company_id = ANY($2)`,
+    [dealId, companyIds]
+  )
+  if (current.rows.length === 0) return notFound(c, 'Deal')
+  const currentStage = current.rows[0].stage as string
+  const CLOSED_STAGES = ['closed_won', 'closed_lost']
+
+  // Moving OUT of a closed stage (a "reopen") is a deliberate action, not a routine
+  // drag-and-drop stage move - require an explicit flag so it can't happen by accident.
+  if (CLOSED_STAGES.includes(currentStage) && stage !== currentStage && !reopen) {
+    return c.json({
+      error: `This deal is already ${currentStage.replace('_', ' ')}. Pass { reopen: true } to move it out of a closed stage.`,
+    }, 409)
+  }
+
+  // closed_won triggers deal_invoice_tasks automation, which needs an owner to
+  // attribute the invoice/tasks to - fail clearly here rather than the automation
+  // silently no-op'ing on a missing owner further down.
+  if (stage === 'closed_won' && !current.rows[0].owner_id) {
+    return validationError(c, 'Assign an owner to this deal before marking it Closed Won.')
   }
 
   let result
@@ -129,7 +153,14 @@ app.patch('/api/deals/:id/stage', requireAuth, requireRole('ceo', 'coo'), async 
     )
   }
 
-  if (result.rows.length === 0) return c.json({ error: 'Deal not found' }, 404)
+  if (result.rows.length === 0) return notFound(c, 'Deal')
+
+  const userId = c.get('userId') as string
+  const stageNote = stage === 'closed_lost' ? `Moved to Closed Lost - ${lost_reason.trim()}` : `Moved to ${stage.replace('_', ' ')}`
+  await query(
+    `INSERT INTO sales_deal_activities (deal_id, user_id, type, note) VALUES ($1,$2,'stage_change',$3)`,
+    [dealId, userId, stageNote]
+  ).catch(() => {})
 
   if (stage === 'closed_won') {
     const dealData = await query(
@@ -174,6 +205,46 @@ app.patch('/api/deals/:id/stage', requireAuth, requireRole('ceo', 'coo'), async 
   }
 
   return c.json({ success: true })
+})
+
+// ── Deal activity timeline (calls/emails/notes/meetings) ─────────────────────
+
+app.get('/api/deals/:id/activities', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
+  const dealId = c.req.param('id')
+  const companyIds = c.get('companyIds') as string[]
+
+  const { rows: [deal] } = await query(`SELECT id FROM sales_deals WHERE id = $1 AND company_id = ANY($2)`, [dealId, companyIds])
+  if (!deal) return notFound(c)
+
+  const result = await query(
+    `SELECT da.id, da.type, da.note, da.created_at, u.name AS user_name
+     FROM sales_deal_activities da
+     LEFT JOIN users u ON u.id = da.user_id
+     WHERE da.deal_id = $1 ORDER BY da.created_at DESC`,
+    [dealId]
+  )
+  return c.json({ activities: result.rows })
+})
+
+app.post('/api/deals/:id/activities', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
+  const dealId = c.req.param('id')
+  const companyIds = c.get('companyIds') as string[]
+  const userId = c.get('userId') as string
+  const body = await c.req.json()
+  const { type, note } = body as { type: string; note: string }
+
+  if (!['call', 'email', 'meeting', 'note'].includes(type)) return validationError(c, 'Invalid type')
+  if (!note?.trim()) return validationError(c, 'note required')
+
+  const { rows: [deal] } = await query(`SELECT id FROM sales_deals WHERE id = $1 AND company_id = ANY($2)`, [dealId, companyIds])
+  if (!deal) return notFound(c)
+
+  const result = await query(
+    `INSERT INTO sales_deal_activities (deal_id, user_id, type, note) VALUES ($1,$2,$3,$4)
+     RETURNING id, type, note, created_at`,
+    [dealId, userId, type, note.trim()]
+  )
+  return c.json({ activity: result.rows[0] }, 201)
 })
 
 export default app

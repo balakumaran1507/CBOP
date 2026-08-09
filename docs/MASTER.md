@@ -1,11 +1,30 @@
 # CBOP v2 — MASTER DOCUMENT
-**Version:** 5.0 (Final after critique + architecture review)
-**Author:** Balakumaran D | **Status:** Ready for Vibe Coding
-**Companies:** Etherence IT · Etherence Pentest · CYBERCOM CTF · AttackOS
-**Last updated:** May 2026
+
+> **⚠ PRE-PIVOT DOCUMENT — read `docs/Project-Scale-Up-Plan.md` first for anything touching
+> multi-tenancy, roles, or the SaaS shell.** This is the ORIGINAL v2 spec, written for a
+> single-tenant, 3-user internal tool (May 2026), before the same-day pivot to a multi-tenant
+> "Super OS" SaaS product (2026-08-05). `docs/Project-Scale-Up-Plan.md` is now the
+> authoritative build plan for tenancy, authorization, and the product shell, and it wins on
+> any conflict with this document in those areas — see its 24-row constraint-change table.
+> This document **remains accurate** for the parts of the original single-tenant build that
+> are unchanged by the pivot: the design system, naming rules, DB conventions, invoice
+> numbering mechanics, and most of the module-level feature detail. Two specific claims below
+> are superseded and should not be trusted as written:
+> - **Section 6 ("User Accounts & Access Control")** and its "3 users only" role model are
+>   superseded by `Project-Scale-Up-Plan.md`'s constraint C13 (role model breaks wholesale —
+>   `tenant`/`workspace`/`team`/`member` + role templates) and C8 (`creator`'s unconditional
+>   bypass is broken in favor of tenant-scoped `owner` + audited `platform_admin`).
+> - **This document's own header claim, "Feature not in this document = does not exist in
+>   v2,"** no longer holds — the pivot adds an entire SaaS shell, billing, and tenancy layer
+>   that by definition isn't in this document.
+>
+> **Version:** 5.0 (Final after critique + architecture review) — pre-pivot
+> **Author:** Balakumaran D | **Status:** Superseded for tenancy/roles/shell; still accurate elsewhere
+> **Companies:** Etherence IT · Etherence Pentest · CYBERCOM CTF · AttackOS
+> **Last updated:** May 2026
 
 > This document supersedes ALL previous versions including PRD v4 FINAL.
-> Feature not in this document = does not exist in v2.
+> Feature not in this document = does not exist in v2. **(Superseded — see banner above.)**
 > Every architectural decision in this file was deliberately chosen — do not revert to Supabase, Bull.js, Redis, Twilio, or Notion without explicit sign-off from Bala.
 
 ---
@@ -697,6 +716,10 @@ users (
   email           TEXT UNIQUE NOT NULL,
   name            TEXT NOT NULL,
   role            TEXT NOT NULL CHECK (role IN ('ceo','coo','cto')),
+  -- ⚠ CORRECTION: this CHECK constraint was DROPPED by migration 057 (`ALTER TABLE users
+  -- DROP CONSTRAINT IF EXISTS users_role_check`) to allow custom role slugs alongside the
+  -- new `company_roles`/`role_module_access` tables. `role` is TEXT NOT NULL only today;
+  -- see `docs/Project-Scale-Up-Plan.md` C13 for the role model that replaces this section.
   telegram_chat_id TEXT,
   whatsapp_number TEXT,
   is_active       BOOLEAN DEFAULT true,

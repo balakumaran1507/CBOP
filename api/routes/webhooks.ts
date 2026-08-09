@@ -8,7 +8,7 @@ const app = new Hono()
 
 function hasValidSecret(req: Request): boolean {
   const secret = process.env.N8N_WEBHOOK_SECRET
-  if (!secret) return true // dev mode: no secret configured → accept all
+  if (!secret) return false // fail closed: no secret configured → reject all
   return req.headers.get('x-n8n-secret') === secret
 }
 

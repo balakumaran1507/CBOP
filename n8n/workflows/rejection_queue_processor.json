@@ -1,0 +1,109 @@
+{
+  "name": "rejection_queue_processor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/30 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "rqp-node-01",
+      "name": "Every 30 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, name, email FROM hiring_applicants WHERE stage = 'rejected' AND rejection_queued_at IS NOT NULL AND rejection_sent_at IS NULL AND rejection_queued_at < NOW() - INTERVAL '48 hours'",
+        "options": {}
+      },
+      "id": "rqp-node-02",
+      "name": "Fetch Pending Rejections",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "rqp-node-03",
+      "name": "Split Into Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CBOP_URL }}/api/hiring/applicants/{{ $json.id }}/send-rejection",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "rqp-node-04",
+      "name": "Send Rejection Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_jobs (name, type, status, completed_at, payload) VALUES ('rejection_queue_processor', 'hiring', 'completed', NOW(), '{\"processed\": true}'::jsonb)",
+        "options": {}
+      },
+      "id": "rqp-node-05",
+      "name": "Log Completion",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1200, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 30 Minutes": {
+      "main": [[{ "node": "Fetch Pending Rejections", "type": "main", "index": 0 }]]
+    },
+    "Fetch Pending Rejections": {
+      "main": [[{ "node": "Split Into Batches", "type": "main", "index": 0 }]]
+    },
+    "Split Into Batches": {
+      "main": [[{ "node": "Send Rejection Email", "type": "main", "index": 0 }]]
+    },
+    "Send Rejection Email": {
+      "main": [[{ "node": "Log Completion", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "errorWorkflow": "error_handler"
+  }
+}

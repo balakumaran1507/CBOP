@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { ChevronDown, ArrowRight, X, CheckCircle2 } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -114,9 +115,9 @@ const SERVICE_LABELS: Record<ServiceType, string> = {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatINR(amount: number | string | null): string {
-  if (amount == null || amount === '') return '—'
+  if (amount == null || amount === '') return '-'
   const n = parseFloat(String(amount))
-  if (isNaN(n)) return '—'
+  if (isNaN(n)) return '-'
   return '₹' + n.toLocaleString('en-IN', { maximumFractionDigits: 0 })
 }
 
@@ -131,11 +132,19 @@ function DealCard({
   onMoveStage,
   onMoveLost,
   movingId,
+  onSelectDeal,
+  onDragStart,
+  onDragEnd,
+  isDragging,
 }: {
   deal: Deal
   onMoveStage: (dealId: string, stage: DealStage) => void
   onMoveLost: (deal: Deal) => void
   movingId: string | null
+  onSelectDeal: (deal: Deal) => void
+  onDragStart: (dealId: string, fromStage: DealStage) => void
+  onDragEnd: () => void
+  isDragging: boolean
 }) {
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -155,37 +164,33 @@ function DealCard({
 
   return (
     <div
-      className="bg-white rounded mb-2 p-3"
-      style={{
-        border: '1px solid var(--border)',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-        opacity: isMoving ? 0.55 : 1,
-        transition: 'opacity 0.15s',
+      className={`bg-card rounded-sm mb-4 p-4 border border-border hover:shadow-md transition-all duration-200 ${isDragging ? 'rotate-[-1.5deg] scale-105 shadow-md opacity-50' : 'shadow-sm'} ${isMoving ? 'opacity-50' : 'opacity-100'} ${isClosed ? 'cursor-pointer' : 'cursor-grab'}`}
+      onClick={() => onSelectDeal(deal)}
+      draggable={!isClosed}
+      onDragStart={(e) => {
+        e.dataTransfer.setData('text/plain', deal.id)
+        e.dataTransfer.effectAllowed = 'move'
+        onDragStart(deal.id, deal.stage)
       }}
+      onDragEnd={onDragEnd}
     >
       {/* Name + value */}
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <p className="text-sm font-medium leading-snug" style={{ color: 'var(--text1)' }}>
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <p className="text-base font-semibold leading-snug text-text1 font-sans">
           {deal.name}
         </p>
-        <p
-          className="text-sm font-semibold flex-shrink-0"
-          style={{ fontFamily: 'var(--font-ibm-plex-mono), monospace', color: 'var(--text1)' }}
-        >
+        <p className="text-sm font-medium flex-shrink-0 text-text1 font-mono">
           {formatINR(deal.value)}
         </p>
       </div>
 
       {/* Company tag + service type */}
-      <div className="flex items-center gap-1.5 mb-2.5 flex-wrap">
-        <span
-          className="text-xs px-1.5 py-0.5 rounded"
-          style={{ backgroundColor: '#E8F4FB', color: 'var(--blue)' }}
-        >
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <span className="text-xs px-2.5 py-1 rounded-sm bg-blue/10 text-blue font-medium font-sans">
           {deal.company_name}
         </span>
         {deal.service_type && (
-          <span className="text-xs" style={{ color: 'var(--text3)' }}>
+          <span className="text-xs text-text3 font-sans font-medium">
             {SERVICE_LABELS[deal.service_type]}
           </span>
         )}
@@ -195,41 +200,26 @@ function DealCard({
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           {deal.owner_name ? (
-            <span className="text-xs truncate" style={{ color: 'var(--text2)' }}>{deal.owner_name}</span>
+            <span className="text-xs truncate text-text2 font-sans font-medium">{deal.owner_name}</span>
           ) : (
-            <span className="text-xs" style={{ color: 'var(--text3)' }}>Unassigned</span>
+            <span className="text-xs text-text3 font-sans font-medium">Unassigned</span>
           )}
-          <span
-            className="text-xs flex-shrink-0"
-            style={{
-              fontFamily: 'var(--font-ibm-plex-mono), monospace',
-              color: deal.days_in_stage >= 7 ? 'var(--amber)' : 'var(--text3)',
-            }}
-          >
+          <span className={`text-xs flex-shrink-0 font-mono font-medium ${deal.days_in_stage >= 7 ? 'text-amber' : 'text-text3'}`}>
             {deal.days_in_stage}d
           </span>
         </div>
 
         {/* Move dropdown (hidden for closed deals) */}
         {!isClosed && (
-          <div className="relative flex-shrink-0" ref={dropdownRef}>
+          <div className="relative flex-shrink-0" ref={dropdownRef} onClick={(e) => e.stopPropagation()}>
             <button
               onClick={() => setDropdownOpen((v) => !v)}
-              className="text-xs px-2 py-1 rounded hover:opacity-75 transition-opacity"
-              style={{ backgroundColor: '#F2F3F3', color: 'var(--text2)', border: '1px solid var(--border)' }}
+              className="text-xs px-3 py-1.5 rounded-sm hover:opacity-80 transition-opacity bg-bg text-text2 border border-border flex items-center gap-1 font-sans font-medium"
             >
-              Move ▾
+              Move <ChevronDown size={14} />
             </button>
             {dropdownOpen && (
-              <div
-                className="absolute right-0 top-full mt-1 z-20 rounded py-1"
-                style={{
-                  backgroundColor: '#fff',
-                  border: '1px solid var(--border)',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
-                  minWidth: '160px',
-                }}
-              >
+              <div className="absolute right-0 top-full mt-2 z-20 rounded-sm bg-card border border-border shadow-md min-w-[160px] py-2">
                 {STAGES.filter((s) => s.key !== deal.stage).map((s) => (
                   <button
                     key={s.key}
@@ -241,18 +231,9 @@ function DealCard({
                         onMoveStage(deal.id, s.key)
                       }
                     }}
-                    className="w-full text-left text-xs px-3 py-2 transition-colors hover:opacity-75"
-                    style={{
-                      backgroundColor: 'transparent',
-                      color:
-                        s.key === 'closed_won'
-                          ? 'var(--green)'
-                          : s.key === 'closed_lost'
-                          ? 'var(--red)'
-                          : 'var(--text1)',
-                    }}
+                    className={`w-full text-left text-sm px-4 py-2 transition-colors hover:bg-bg font-sans font-medium flex items-center gap-2 ${s.key === 'closed_won' ? 'text-green' : s.key === 'closed_lost' ? 'text-red' : 'text-text1'}`}
                   >
-                    → {s.label}
+                    <ArrowRight size={14} /> {s.label}
                   </button>
                 ))}
               </div>
@@ -263,8 +244,7 @@ function DealCard({
         {/* Lost reason badge for closed_lost deals */}
         {deal.stage === 'closed_lost' && deal.lost_reason && (
           <span
-            className="text-xs truncate"
-            style={{ color: 'var(--red)', maxWidth: '120px' }}
+            className="text-xs truncate text-red font-sans font-medium max-w-[120px]"
             title={deal.lost_reason}
           >
             {deal.lost_reason}
@@ -284,6 +264,12 @@ function KanbanColumn({
   onMoveStage,
   onMoveLost,
   movingId,
+  onSelectDeal,
+  onDragStart,
+  onDragEnd,
+  onDropDeal,
+  draggingDealId,
+  draggingFromStage,
 }: {
   stage: DealStage
   label: string
@@ -291,51 +277,69 @@ function KanbanColumn({
   onMoveStage: (dealId: string, stage: DealStage) => void
   onMoveLost: (deal: Deal) => void
   movingId: string | null
+  onSelectDeal: (deal: Deal) => void
+  onDragStart: (dealId: string, fromStage: DealStage) => void
+  onDragEnd: () => void
+  onDropDeal: (dealId: string, toStage: DealStage) => void
+  draggingDealId: string | null
+  draggingFromStage: DealStage | null
 }) {
+  const [isDragOver, setIsDragOver] = useState(false)
   const colTotal = totalValue(deals)
   const isWon  = stage === 'closed_won'
   const isLost = stage === 'closed_lost'
 
-  const headerColor  = isWon ? 'var(--green)' : isLost ? 'var(--red)' : 'var(--text2)'
-  const colBg        = isWon ? '#F0FAF0'      : isLost ? '#FEF0EE'    : '#F2F3F3'
+  const isValidDropTarget = draggingDealId != null && draggingFromStage !== stage
+
+  const getColBg = () => {
+    if (isDragOver && isValidDropTarget) {
+      return isLost ? 'bg-red/10 border-blue border-dashed' : isWon ? 'bg-green/10 border-blue border-dashed' : 'bg-blue/10 border-blue border-dashed'
+    }
+    return isWon ? 'bg-green/10 border-border' : isLost ? 'bg-red/10 border-border' : 'bg-bg border-border'
+  }
+
+  const headerColor = isWon ? 'text-green' : isLost ? 'text-red' : 'text-text2'
 
   return (
     <div
-      className="flex flex-col flex-shrink-0 rounded"
-      style={{ width: '240px', backgroundColor: colBg, border: '1px solid var(--border)' }}
+      className={`flex flex-col flex-shrink-0 rounded-sm w-[280px] border-2 transition-all duration-200 ${getColBg()}`}
+      onDragOver={(e) => {
+        if (!isValidDropTarget) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        setIsDragOver(true)
+      }}
+      onDragLeave={() => setIsDragOver(false)}
+      onDrop={(e) => {
+        e.preventDefault()
+        setIsDragOver(false)
+        if (!isValidDropTarget) return
+        const dealId = e.dataTransfer.getData('text/plain')
+        if (dealId) onDropDeal(dealId, stage)
+      }}
     >
       {/* Column header */}
-      <div className="px-3 py-2.5" style={{ borderBottom: '1px solid var(--border)' }}>
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: headerColor }}>
+      <div className="px-5 py-4 border-b border-border">
+        <div className="flex items-center justify-between mb-2">
+          <span className={`text-sm font-bold uppercase tracking-wider font-sans ${headerColor}`}>
             {label}
           </span>
-          <span
-            className="text-xs px-1.5 py-0.5 rounded-full"
-            style={{
-              backgroundColor: 'rgba(0,0,0,0.06)',
-              color: 'var(--text2)',
-              fontFamily: 'var(--font-ibm-plex-mono), monospace',
-            }}
-          >
+          <span className="text-xs px-2.5 py-1 rounded-sm bg-border text-text2 font-mono font-semibold">
             {deals.length}
           </span>
         </div>
         {deals.length > 0 && (
-          <p
-            className="text-xs mt-1"
-            style={{ fontFamily: 'var(--font-ibm-plex-mono), monospace', color: 'var(--text2)' }}
-          >
+          <p className="text-sm font-mono font-medium text-text2">
             {formatINR(colTotal)}
           </p>
         )}
       </div>
 
       {/* Cards */}
-      <div className="p-2">
+      <div className="p-3 min-h-[100px]">
         {deals.length === 0 ? (
-          <p className="text-xs text-center py-5" style={{ color: 'var(--text3)' }}>
-            No deals
+          <p className={`text-sm text-center py-8 font-sans font-medium ${isDragOver && isValidDropTarget ? 'text-blue' : 'text-text3'}`}>
+            {isDragOver && isValidDropTarget ? 'Drop here' : 'No deals'}
           </p>
         ) : (
           deals.map((d) => (
@@ -345,11 +349,129 @@ function KanbanColumn({
               onMoveStage={onMoveStage}
               onMoveLost={onMoveLost}
               movingId={movingId}
+              onSelectDeal={onSelectDeal}
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
+              isDragging={draggingDealId === d.id}
             />
           ))
         )}
       </div>
     </div>
+  )
+}
+
+// ── Deal Detail Slide-over (activity timeline) ─────────────────────────────────
+
+interface DealActivity {
+  id: string
+  type: 'call' | 'email' | 'meeting' | 'note' | 'stage_change'
+  note: string
+  created_at: string
+  user_name: string | null
+}
+
+const ACTIVITY_TYPE_LABEL: Record<DealActivity['type'], string> = {
+  call: 'Call', email: 'Email', meeting: 'Meeting', note: 'Note', stage_change: 'Stage change',
+}
+
+function DealDetailSlideOver({ deal, onClose }: { deal: Deal | null; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [newType, setNewType] = useState<'call' | 'email' | 'meeting' | 'note'>('note')
+  const [newNote, setNewNote] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const { data, isLoading } = useQuery<{ activities: DealActivity[] }>({
+    queryKey: ['deal-activities', deal?.id],
+    queryFn: async () => {
+      const res = await fetch(`/api/deals/${deal!.id}/activities`, { credentials: 'include' })
+      if (!res.ok) throw new Error('Failed')
+      return res.json()
+    },
+    enabled: !!deal,
+  })
+  const activities = data?.activities ?? []
+
+  async function addActivity() {
+    if (!deal || !newNote.trim()) return
+    setSaving(true)
+    await fetch(`/api/deals/${deal.id}/activities`, {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: newType, note: newNote.trim() }),
+    })
+    setSaving(false)
+    setNewNote('')
+    qc.invalidateQueries({ queryKey: ['deal-activities', deal.id] })
+  }
+
+  if (!deal) return null
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/35" onClick={onClose} />
+      <div className="fixed right-0 top-0 h-full z-50 flex flex-col w-[480px] bg-bg shadow-[-4px_0_24px_rgba(0,0,0,0.14)]">
+        <div className="flex items-center justify-between px-6 py-4 flex-shrink-0 border-b border-border">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold truncate font-sans text-text1">{deal.name}</h2>
+            <p className="text-xs mt-0.5 text-text3 font-sans">{deal.company_name} · {formatINR(deal.value)}</p>
+          </div>
+          <button onClick={onClose} className="text-text2 hover:text-text1 transition-colors flex-shrink-0"><X size={18} /></button>
+        </div>
+
+        <div className="flex-1 overflow-auto px-6 py-5">
+          <div className="flex gap-2 mb-3">
+            {(['note', 'call', 'email', 'meeting'] as const).map(t => (
+              <button
+                key={t}
+                onClick={() => setNewType(t)}
+                className={`px-3 py-1 rounded-sm text-xs font-medium font-sans border transition-colors ${
+                  newType === t ? 'bg-blue text-white border-blue' : 'bg-card text-text2 border-border hover:bg-bg'
+                }`}
+              >
+                {ACTIVITY_TYPE_LABEL[t]}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2 mb-6">
+            <input
+              className="flex-1 border border-border bg-card text-text1 rounded-sm px-3 h-9 text-sm font-sans focus:outline-none focus:border-blue"
+              placeholder="Log a call, email, meeting, or note…"
+              value={newNote}
+              onChange={e => setNewNote(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addActivity()}
+            />
+            <button
+              onClick={addActivity}
+              disabled={saving || !newNote.trim()}
+              className="bg-blue text-white rounded-sm px-4 text-sm font-medium font-sans disabled:opacity-50 hover:bg-blue/90 transition-colors"
+            >
+              {saving ? '…' : 'Add'}
+            </button>
+          </div>
+
+          {isLoading ? (
+            <p className="text-sm text-text3 font-sans">Loading…</p>
+          ) : activities.length === 0 ? (
+            <p className="text-sm text-text3 font-sans text-center py-6">No activity logged yet</p>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {activities.map(a => (
+                <div key={a.id} className="flex gap-2.5 border-l-2 border-border pl-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="text-[10.5px] font-bold uppercase text-text3 tracking-wider font-sans">{ACTIVITY_TYPE_LABEL[a.type]}</span>
+                      <span className="text-[10.5px] text-text3 font-mono">{new Date(a.created_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                    <p className="text-sm text-text1 m-0 font-sans">{a.note}</p>
+                    {a.user_name && <p className="text-xs text-text3 mt-0.5 font-sans">{a.user_name}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
   )
 }
 
@@ -428,7 +550,7 @@ function NewDealSlideOver({
       onCreated()
       onClose()
     } catch {
-      setSaveError('Network error — please try again')
+      setSaveError('Network error - please try again')
     } finally {
       setSaving(false)
     }
@@ -436,54 +558,30 @@ function NewDealSlideOver({
 
   if (!open) return null
 
-  const inputStyle = {
-    height:      '36px',
-    border:      '1px solid var(--border)',
-    borderRadius: '6px',
-    outline:     'none',
-    padding:     '0 12px',
-    fontSize:    '0.875rem',
-    width:       '100%',
-    fontFamily:  'var(--font-inter), sans-serif',
-    backgroundColor: '#fff',
-  }
-
-  const labelStyle = {
-    display:     'block',
-    fontSize:    '0.75rem',
-    fontWeight:  500,
-    marginBottom: '4px',
-    color:       'var(--text2)',
-    fontFamily:  'var(--font-inter), sans-serif',
-  } as React.CSSProperties
+  const inputClass = "h-9 border border-border bg-card text-text1 rounded-sm outline-none px-3 text-sm w-full font-sans focus:border-blue transition-colors"
+  const labelClass = "block text-xs font-medium mb-1 text-text2 font-sans"
 
   return (
     <>
       <div
-        className="fixed inset-0 z-40"
-        style={{ backgroundColor: 'rgba(0,0,0,0.35)' }}
+        className="fixed inset-0 z-40 bg-black/35"
         onClick={onClose}
       />
       <div
-        className="fixed right-0 top-0 h-full z-50 flex flex-col"
-        style={{ width: '480px', backgroundColor: '#fff', boxShadow: '-4px 0 24px rgba(0,0,0,0.14)' }}
+        className="fixed right-0 top-0 h-full z-50 flex flex-col w-[480px] bg-bg shadow-[-4px_0_24px_rgba(0,0,0,0.14)]"
       >
         {/* Header */}
         <div
-          className="flex items-center justify-between px-6 py-4 flex-shrink-0"
-          style={{ borderBottom: '1px solid var(--border)' }}
+          className="flex items-center justify-between px-6 py-4 flex-shrink-0 border-b border-border"
         >
-          <h2
-            className="text-base font-semibold"
-            style={{ fontFamily: 'var(--font-syne), sans-serif', color: 'var(--text1)' }}
-          >
+          <h2 className="text-base font-semibold font-sans text-text1">
             New Deal
           </h2>
           <button
             onClick={onClose}
-            style={{ color: 'var(--text2)', fontSize: '1.1rem', background: 'none', border: 'none', cursor: 'pointer' }}
+            className="text-text2 hover:text-text1 transition-colors flex items-center"
           >
-            ✕
+            <X size={18} />
           </button>
         </div>
 
@@ -492,22 +590,22 @@ function NewDealSlideOver({
           <div className="px-6 py-5 flex flex-col gap-4 flex-1">
 
             <div>
-              <label style={labelStyle}>Deal / Client Name *</label>
+              <label className={labelClass}>Deal / Client Name *</label>
               <input
                 type="text"
                 value={form.name}
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                 placeholder="e.g. Cyberdyne Systems Pentest"
-                style={inputStyle}
+                className={inputClass}
               />
             </div>
 
             <div>
-              <label style={labelStyle}>Company *</label>
+              <label className={labelClass}>Company *</label>
               <select
                 value={form.company_id}
                 onChange={(e) => setForm((f) => ({ ...f, company_id: e.target.value }))}
-                style={{ ...inputStyle, height: '36px' }}
+                className={inputClass}
               >
                 {companies.length === 0 && <option value="">Loading…</option>}
                 {companies.map((c) => (
@@ -517,7 +615,7 @@ function NewDealSlideOver({
             </div>
 
             <div>
-              <label style={labelStyle}>Value (₹)</label>
+              <label className={labelClass}>Value (₹)</label>
               <input
                 type="number"
                 value={form.value}
@@ -525,16 +623,16 @@ function NewDealSlideOver({
                 placeholder="0"
                 min="0"
                 step="1"
-                style={{ ...inputStyle, fontFamily: 'var(--font-ibm-plex-mono), monospace' }}
+                className="h-9 border border-border bg-card text-text1 rounded-sm outline-none px-3 text-sm w-full font-mono focus:border-blue transition-colors"
               />
             </div>
 
             <div>
-              <label style={labelStyle}>Stage *</label>
+              <label className={labelClass}>Stage *</label>
               <select
                 value={form.stage}
                 onChange={(e) => setForm((f) => ({ ...f, stage: e.target.value as DealStage }))}
-                style={{ ...inputStyle, height: '36px' }}
+                className={inputClass}
               >
                 {STAGES.map((s) => (
                   <option key={s.key} value={s.key}>{s.label}</option>
@@ -543,13 +641,13 @@ function NewDealSlideOver({
             </div>
 
             <div>
-              <label style={labelStyle}>Service Type</label>
+              <label className={labelClass}>Service Type</label>
               <select
                 value={form.service_type}
                 onChange={(e) => setForm((f) => ({ ...f, service_type: e.target.value as ServiceType | '' }))}
-                style={{ ...inputStyle, height: '36px' }}
+                className={inputClass}
               >
-                <option value="">— Select —</option>
+                <option value="">- Select -</option>
                 {(Object.entries(SERVICE_LABELS) as [ServiceType, string][]).map(([k, v]) => (
                   <option key={k} value={k}>{v}</option>
                 ))}
@@ -557,13 +655,13 @@ function NewDealSlideOver({
             </div>
 
             <div>
-              <label style={labelStyle}>Owner</label>
+              <label className={labelClass}>Owner</label>
               <select
                 value={form.owner_id}
                 onChange={(e) => setForm((f) => ({ ...f, owner_id: e.target.value }))}
-                style={{ ...inputStyle, height: '36px' }}
+                className={inputClass}
               >
-                <option value="">— Unassigned —</option>
+                <option value="">- Unassigned -</option>
                 {users.map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.name} ({u.role.toUpperCase()})
@@ -573,28 +671,25 @@ function NewDealSlideOver({
             </div>
 
             {error && (
-              <p className="text-xs" style={{ color: 'var(--red)' }}>{error}</p>
+              <p className="text-xs text-red font-sans">{error}</p>
             )}
           </div>
 
           {/* Footer */}
           <div
-            className="flex gap-3 px-6 py-4 flex-shrink-0"
-            style={{ borderTop: '1px solid var(--border)' }}
+            className="flex gap-3 px-6 py-4 flex-shrink-0 border-t border-border bg-card"
           >
             <button
               type="submit"
               disabled={saving}
-              className="px-4 py-2 text-sm rounded font-medium disabled:opacity-50"
-              style={{ backgroundColor: 'var(--blue)', color: '#fff', fontFamily: 'var(--font-inter), sans-serif', border: 'none', cursor: 'pointer' }}
+              className="px-4 py-2 text-sm rounded-sm font-medium disabled:opacity-50 bg-blue text-white font-sans hover:bg-blue/90 transition-colors"
             >
               {saving ? 'Creating…' : 'Create Deal'}
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-sm rounded"
-              style={{ backgroundColor: '#F2F3F3', color: 'var(--text2)', border: '1px solid var(--border)', cursor: 'pointer' }}
+              className="px-4 py-2 text-sm rounded-sm bg-bg text-text2 border border-border font-sans hover:bg-border transition-colors"
             >
               Cancel
             </button>
@@ -636,55 +731,41 @@ function LostReasonSlideOver({
   return (
     <>
       <div
-        className="fixed inset-0 z-40"
-        style={{ backgroundColor: 'rgba(0,0,0,0.35)' }}
+        className="fixed inset-0 z-40 bg-black/35"
         onClick={onClose}
       />
       <div
-        className="fixed right-0 top-0 h-full z-50 flex flex-col"
-        style={{ width: '440px', backgroundColor: '#fff', boxShadow: '-4px 0 24px rgba(0,0,0,0.14)' }}
+        className="fixed right-0 top-0 h-full z-50 flex flex-col w-[440px] bg-bg shadow-[-4px_0_24px_rgba(0,0,0,0.14)]"
       >
         {/* Red-accented header */}
         <div
-          className="flex items-center justify-between px-6 py-4 flex-shrink-0"
-          style={{ borderBottom: '1px solid var(--border)', borderLeft: '4px solid var(--red)' }}
+          className="flex items-center justify-between px-6 py-4 flex-shrink-0 border-b border-border border-l-4 border-l-red"
         >
           <div>
-            <h2
-              className="text-base font-semibold"
-              style={{ fontFamily: 'var(--font-syne), sans-serif', color: 'var(--red)' }}
-            >
+            <h2 className="text-base font-semibold font-sans text-red">
               Mark as Lost
             </h2>
-            <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--text2)', maxWidth: '300px' }}>
+            <p className="text-xs mt-0.5 truncate text-text2 max-w-[300px] font-sans">
               {deal.name}
             </p>
           </div>
           <button
             onClick={onClose}
-            style={{ color: 'var(--text2)', fontSize: '1.1rem', background: 'none', border: 'none', cursor: 'pointer' }}
+            className="text-text2 hover:text-text1 transition-colors flex items-center"
           >
-            ✕
+            <X size={18} />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col flex-1">
           <div className="px-6 py-5 flex flex-col gap-4 flex-1">
-            <p className="text-sm" style={{ color: 'var(--text2)' }}>
-              This will move <strong style={{ color: 'var(--text1)' }}>{deal.name}</strong> to Closed/Lost.
+            <p className="text-sm text-text2 font-sans">
+              This will move <strong className="text-text1 font-semibold">{deal.name}</strong> to Closed/Lost.
               This cannot be undone from the pipeline view.
             </p>
 
             <div>
-              <label
-                style={{
-                  display: 'block',
-                  fontSize: '0.75rem',
-                  fontWeight: 500,
-                  marginBottom: '4px',
-                  color: 'var(--text2)',
-                }}
-              >
+              <label className="block text-xs font-medium mb-1 text-text2 font-sans">
                 Why was this deal lost? *
               </label>
               <textarea
@@ -692,40 +773,28 @@ function LostReasonSlideOver({
                 onChange={(e) => setReason(e.target.value)}
                 placeholder="e.g. Budget cut, chose competitor, no response after proposal..."
                 rows={5}
-                className="w-full resize-none"
-                style={{
-                  border:       '1px solid var(--border)',
-                  borderRadius: '6px',
-                  padding:      '8px 12px',
-                  fontSize:     '0.875rem',
-                  fontFamily:   'var(--font-inter), sans-serif',
-                  outline:      'none',
-                  width:        '100%',
-                }}
+                className="w-full resize-none border border-border bg-card text-text1 rounded-sm px-3 py-2 text-sm font-sans focus:outline-none focus:border-red transition-colors"
               />
               {error && (
-                <p className="text-xs mt-1" style={{ color: 'var(--red)' }}>{error}</p>
+                <p className="text-xs mt-1 text-red font-sans">{error}</p>
               )}
             </div>
           </div>
 
           <div
-            className="flex gap-3 px-6 py-4 flex-shrink-0"
-            style={{ borderTop: '1px solid var(--border)' }}
+            className="flex gap-3 px-6 py-4 flex-shrink-0 border-t border-border bg-card"
           >
             <button
               type="submit"
               disabled={saving}
-              className="px-4 py-2 text-sm rounded font-medium disabled:opacity-50"
-              style={{ backgroundColor: 'var(--red)', color: '#fff', border: 'none', cursor: 'pointer' }}
+              className="px-4 py-2 text-sm rounded-sm font-medium disabled:opacity-50 bg-red text-white hover:bg-red/90 transition-colors font-sans"
             >
               {saving ? 'Saving…' : 'Confirm Lost'}
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-sm rounded"
-              style={{ backgroundColor: '#F2F3F3', color: 'var(--text2)', border: '1px solid var(--border)', cursor: 'pointer' }}
+              className="px-4 py-2 text-sm rounded-sm bg-bg text-text2 border border-border font-sans hover:bg-border transition-colors"
             >
               Cancel
             </button>
@@ -743,6 +812,9 @@ function PipelineTab() {
   const [newDealOpen, setNewDealOpen] = useState(false)
   const [lostDeal,    setLostDeal]    = useState<Deal | null>(null)
   const [movingId,    setMovingId]    = useState<string | null>(null)
+  const [selectedDeal, setSelectedDeal] = useState<Deal | null>(null)
+  const [draggingDealId, setDraggingDealId] = useState<string | null>(null)
+  const [draggingFromStage, setDraggingFromStage] = useState<DealStage | null>(null)
 
   const { data: dealsData, isLoading: dealsLoading, isError: dealsError } = useQuery<{ deals: Deal[] }>({
     queryKey: ['deals'],
@@ -812,6 +884,26 @@ function PipelineTab() {
     )
   }
 
+  function handleDragStart(dealId: string, fromStage: DealStage) {
+    setDraggingDealId(dealId)
+    setDraggingFromStage(fromStage)
+  }
+
+  function handleDragEnd() {
+    setDraggingDealId(null)
+    setDraggingFromStage(null)
+  }
+
+  function handleDropDeal(dealId: string, toStage: DealStage) {
+    const deal = deals.find((d) => d.id === dealId)
+    if (!deal || deal.stage === toStage) return
+    if (toStage === 'closed_lost') {
+      setLostDeal(deal)
+    } else {
+      handleMoveStage(dealId, toStage)
+    }
+  }
+
   const deals = dealsData?.deals || []
   const dealsByStage = STAGES.reduce((acc, s) => {
     acc[s.key] = deals.filter((d) => d.stage === s.key)
@@ -824,32 +916,24 @@ function PipelineTab() {
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
-      <div
-        className="flex items-center justify-between px-6 py-4 flex-shrink-0 bg-white"
-        style={{ borderBottom: '1px solid var(--border)' }}
-      >
+      <div className="flex items-center justify-between px-6 py-4 flex-shrink-0 bg-card border-b border-border">
         <div className="flex items-center gap-5">
           {dealsLoading ? (
-            <div className="h-4 w-32 rounded animate-pulse" style={{ backgroundColor: '#E0E3E3' }} />
+            <div className="h-4 w-32 rounded-sm animate-pulse bg-border" />
           ) : dealsError ? (
-            <p className="text-xs" style={{ color: 'var(--red)' }}>Failed to load deals</p>
+            <p className="text-xs text-red font-sans">Failed to load deals</p>
           ) : (
             <>
-              <p className="text-sm" style={{ color: 'var(--text2)' }}>
-                <span
-                  style={{ fontFamily: 'var(--font-ibm-plex-mono), monospace', color: 'var(--text1)', fontWeight: 600 }}
-                >
-                  {openDeals.length}
-                </span>
+              <p className="text-sm text-text2 font-sans">
+                <span className="font-mono text-text1 font-semibold">{openDeals.length}</span>
                 {' '}open deal{openDeals.length !== 1 ? 's' : ''}
               </p>
-              <p className="text-sm" style={{ color: 'var(--text2)' }}>
-                <span
-                  style={{ fontFamily: 'var(--font-ibm-plex-mono), monospace', color: 'var(--blue)', fontWeight: 600 }}
-                >
-                  {formatINR(pipelineTotal)}
-                </span>
+              <p className="text-sm text-text2 font-sans">
+                <span className="font-mono text-blue font-semibold">{formatINR(pipelineTotal)}</span>
                 {' '}pipeline
+              </p>
+              <p className="text-xs hidden md:block text-text3 font-sans">
+                Drag a card to another column to change its stage
               </p>
             </>
           )}
@@ -857,22 +941,20 @@ function PipelineTab() {
 
         <button
           onClick={() => setNewDealOpen(true)}
-          className="text-sm px-4 py-2 rounded font-medium"
-          style={{ backgroundColor: 'var(--blue)', color: '#fff', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-inter), sans-serif' }}
+          className="text-sm px-4 py-2 rounded-sm font-medium bg-blue text-white hover:bg-blue/90 transition-colors font-sans"
         >
           + New Deal
         </button>
       </div>
 
       {/* Kanban board */}
-      <div className="flex-1 overflow-auto" style={{ backgroundColor: 'var(--bg)' }}>
+      <div className="flex-1 overflow-auto bg-bg">
         {dealsLoading ? (
           <div className="flex gap-4 p-6">
             {STAGES.map((s) => (
               <div
                 key={s.key}
-                className="flex-shrink-0 rounded animate-pulse"
-                style={{ width: '240px', height: '280px', backgroundColor: '#E0E3E3' }}
+                className="flex-shrink-0 rounded-sm animate-pulse bg-card w-[240px] h-[280px] border border-border"
               />
             ))}
           </div>
@@ -887,6 +969,12 @@ function PipelineTab() {
                 onMoveStage={handleMoveStage}
                 onMoveLost={setLostDeal}
                 movingId={movingId}
+                onSelectDeal={setSelectedDeal}
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+                onDropDeal={handleDropDeal}
+                draggingDealId={draggingDealId}
+                draggingFromStage={draggingFromStage}
               />
             ))}
           </div>
@@ -909,6 +997,10 @@ function PipelineTab() {
         onClose={() => setLostDeal(null)}
         onConfirm={handleConfirmLost}
         saving={moveStage.isPending}
+      />
+      <DealDetailSlideOver
+        deal={selectedDeal}
+        onClose={() => setSelectedDeal(null)}
       />
     </div>
   )
@@ -940,14 +1032,14 @@ const labelStyle: React.CSSProperties = {
 // ── Invoice helpers ───────────────────────────────────────────────────────────
 
 function formatInvoiceAmount(amount: number | string | null): string {
-  if (amount == null || amount === '') return '—'
+  if (amount == null || amount === '') return '-'
   const n = parseFloat(String(amount))
-  if (isNaN(n)) return '—'
+  if (isNaN(n)) return '-'
   return '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 function fmtDate(d: string | null): string {
-  if (!d) return '—'
+  if (!d) return '-'
   return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
@@ -960,11 +1052,11 @@ function effectiveStatus(inv: Invoice): InvoiceStatus {
   return inv.status
 }
 
-const STATUS_STYLE: Record<InvoiceStatus, React.CSSProperties> = {
-  draft:   { backgroundColor: '#F2F3F3', color: '#687078' },
-  sent:    { backgroundColor: '#E8F4FB', color: '#0073BB' },
-  paid:    { backgroundColor: '#EBF5E8', color: '#1D8102' },
-  overdue: { backgroundColor: '#FEF0EE', color: '#D13212' },
+const STATUS_CLASS: Record<InvoiceStatus, string> = {
+  draft:   'bg-border/50 text-text2',
+  sent:    'bg-blue/10 text-blue',
+  paid:    'bg-green/10 text-green',
+  overdue: 'bg-red/10 text-red',
 }
 
 const STATUS_LABEL: Record<InvoiceStatus, string> = {
@@ -1068,7 +1160,7 @@ function NewInvoiceSlideOver({
       onCreated()
       onClose()
     } catch {
-      setSaveError('Network error — please try again')
+      setSaveError('Network error - please try again')
     } finally {
       setSaving(false)
     }
@@ -1084,32 +1176,26 @@ function NewInvoiceSlideOver({
     ? deals.filter((d) => d.company_id === form.company_id && d.stage === 'closed_won')
     : deals.filter((d) => d.stage === 'closed_won')
 
+  const inputClass = "h-9 border border-border bg-card text-text1 rounded-sm outline-none px-3 text-sm w-full font-sans focus:border-blue transition-colors"
+  const labelClass = "block text-xs font-medium mb-1 text-text2 font-sans"
+
   return (
     <>
-      <div className="fixed inset-0 z-40" style={{ backgroundColor: 'rgba(0,0,0,0.35)' }} onClick={onClose} />
-      <div
-        className="fixed right-0 top-0 h-full z-50 flex flex-col"
-        style={{ width: '520px', backgroundColor: '#fff', boxShadow: '-4px 0 24px rgba(0,0,0,0.14)' }}
-      >
-        <div
-          className="flex items-center justify-between px-6 py-4 flex-shrink-0"
-          style={{ borderBottom: '1px solid var(--border)' }}
-        >
-          <h2 className="text-base font-semibold" style={{ fontFamily: 'var(--font-syne), sans-serif', color: 'var(--text1)' }}>
-            New Invoice
-          </h2>
-          <button onClick={onClose} style={{ color: 'var(--text2)', fontSize: '1.1rem', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
+      <div className="fixed inset-0 z-40 bg-black/35" onClick={onClose} />
+      <div className="fixed right-0 top-0 h-full z-50 flex flex-col w-[520px] bg-bg shadow-[-4px_0_24px_rgba(0,0,0,0.14)]">
+        <div className="flex items-center justify-between px-6 py-4 flex-shrink-0 border-b border-border">
+          <h2 className="text-base font-semibold font-sans text-text1">New Invoice</h2>
+          <button onClick={onClose} className="text-text2 hover:text-text1 transition-colors"><X size={18} /></button>
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-auto">
           <div className="px-6 py-5 flex flex-col gap-4 flex-1">
-
             <div>
-              <label style={labelStyle}>Company *</label>
+              <label className={labelClass}>Company *</label>
               <select
                 value={form.company_id}
                 onChange={(e) => setForm((f) => ({ ...f, company_id: e.target.value, client_id: '', deal_id: '' }))}
-                style={inputStyle}
+                className={inputClass}
               >
                 {companies.length === 0 && <option value="">Loading…</option>}
                 {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -1117,17 +1203,17 @@ function NewInvoiceSlideOver({
             </div>
 
             <div>
-              <label style={labelStyle}>Client *</label>
+              <label className={labelClass}>Client *</label>
               {filteredClients.length === 0
-                ? <p className="text-xs mt-1" style={{ color: 'var(--text3)' }}>
+                ? <p className="text-xs mt-1 text-text3 font-sans">
                     No clients for this company yet. Add one in the Clients tab.
                   </p>
                 : <select
                     value={form.client_id}
                     onChange={(e) => setForm((f) => ({ ...f, client_id: e.target.value }))}
-                    style={inputStyle}
+                    className={inputClass}
                   >
-                    <option value="">— Select client —</option>
+                    <option value="">- Select client -</option>
                     {filteredClients.map((cl) => (
                       <option key={cl.id} value={cl.id}>
                         {cl.name}{cl.org_name ? ` (${cl.org_name})` : ''}
@@ -1138,13 +1224,13 @@ function NewInvoiceSlideOver({
             </div>
 
             <div>
-              <label style={labelStyle}>Linked Deal (optional)</label>
+              <label className={labelClass}>Linked Deal (optional)</label>
               <select
                 value={form.deal_id}
                 onChange={(e) => setForm((f) => ({ ...f, deal_id: e.target.value }))}
-                style={inputStyle}
+                className={inputClass}
               >
-                <option value="">— No deal —</option>
+                <option value="">- No deal -</option>
                 {filteredDeals.map((d) => (
                   <option key={d.id} value={d.id}>{d.name}</option>
                 ))}
@@ -1152,7 +1238,7 @@ function NewInvoiceSlideOver({
             </div>
 
             <div>
-              <label style={labelStyle}>Amount (₹, excl. GST) *</label>
+              <label className={labelClass}>Amount (₹, excl. GST) *</label>
               <input
                 type="number"
                 value={form.amount}
@@ -1160,31 +1246,28 @@ function NewInvoiceSlideOver({
                 placeholder="0.00"
                 min="0"
                 step="0.01"
-                style={{ ...inputStyle, fontFamily: 'var(--font-ibm-plex-mono), monospace' }}
+                className="h-9 border border-border bg-card text-text1 rounded-sm outline-none px-3 text-sm w-full font-mono focus:border-blue transition-colors"
               />
             </div>
 
             {amt > 0 && (
-              <div
-                className="rounded px-4 py-3 text-xs"
-                style={{ backgroundColor: '#FFF9F5', border: '1px solid #E8820C', fontFamily: 'var(--font-ibm-plex-mono), monospace' }}
-              >
+              <div className="rounded-sm px-4 py-3 text-xs bg-border/20 border border-border font-mono text-text1">
                 {form.gst_type === 'cgst_sgst'
                   ? <>Subtotal: {formatInvoiceAmount(amt)} | CGST 9%: {formatInvoiceAmount(cgst)} | SGST 9%: {formatInvoiceAmount(sgst)}</>
                   : <>Subtotal: {formatInvoiceAmount(amt)} | IGST 18%: {formatInvoiceAmount(gst)}</>
                 }
-                <span className="font-semibold ml-2" style={{ color: 'var(--amber)' }}>
+                <span className="font-semibold ml-2 text-amber">
                   Total: {formatInvoiceAmount(total)}
                 </span>
               </div>
             )}
 
             <div>
-              <label style={labelStyle}>GST Type *</label>
+              <label className={labelClass}>GST Type *</label>
               <select
                 value={form.gst_type}
                 onChange={(e) => setForm((f) => ({ ...f, gst_type: e.target.value as 'cgst_sgst' | 'igst' }))}
-                style={inputStyle}
+                className={inputClass}
               >
                 <option value="cgst_sgst">CGST + SGST (Intra-state)</option>
                 <option value="igst">IGST (Inter-state)</option>
@@ -1192,63 +1275,52 @@ function NewInvoiceSlideOver({
             </div>
 
             <div>
-              <label style={labelStyle}>Due Date *</label>
+              <label className={labelClass}>Due Date *</label>
               <input
                 type="date"
                 value={form.due_date}
                 onChange={(e) => setForm((f) => ({ ...f, due_date: e.target.value }))}
-                style={{ ...inputStyle, fontFamily: 'var(--font-ibm-plex-mono), monospace' }}
+                className="h-9 border border-border bg-card text-text1 rounded-sm outline-none px-3 text-sm w-full font-mono focus:border-blue transition-colors"
               />
             </div>
 
             <div>
-              <label style={labelStyle}>Service Description</label>
+              <label className={labelClass}>Service Description</label>
               <input
                 type="text"
                 value={form.service_description}
                 onChange={(e) => setForm((f) => ({ ...f, service_description: e.target.value }))}
-                placeholder="e.g. Penetration Testing Services — Scope: Internal Network"
-                style={inputStyle}
+                placeholder="e.g. Penetration Testing Services - Scope: Internal Network"
+                className={inputClass}
               />
             </div>
 
             <div>
-              <label style={labelStyle}>Notes (appears on invoice)</label>
+              <label className={labelClass}>Notes (appears on invoice)</label>
               <textarea
                 value={form.notes}
                 onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
                 placeholder="Any additional notes or payment instructions..."
                 rows={3}
-                className="resize-none"
-                style={{
-                  border: '1px solid var(--border)',
-                  borderRadius: '6px',
-                  padding: '8px 12px',
-                  fontSize: '0.875rem',
-                  fontFamily: 'var(--font-inter), sans-serif',
-                  outline: 'none',
-                  width: '100%',
-                }}
+                className="w-full resize-none border border-border bg-card text-text1 rounded-sm px-3 py-2 text-sm font-sans focus:outline-none focus:border-blue transition-colors"
               />
             </div>
 
-            {error && <p className="text-xs" style={{ color: 'var(--red)' }}>{error}</p>}
+            {error && <p className="text-xs text-red font-sans">{error}</p>}
           </div>
 
-          <div className="flex gap-3 px-6 py-4 flex-shrink-0" style={{ borderTop: '1px solid var(--border)' }}>
+          <div className="flex gap-3 px-6 py-4 flex-shrink-0 border-t border-border bg-card">
             <button
               type="submit"
               disabled={saving}
-              className="px-4 py-2 text-sm rounded font-medium disabled:opacity-50"
-              style={{ backgroundColor: 'var(--blue)', color: '#fff', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-inter), sans-serif' }}
+              className="px-4 py-2 text-sm rounded-sm font-medium disabled:opacity-50 bg-blue text-white hover:bg-blue/90 transition-colors font-sans"
             >
               {saving ? 'Creating…' : 'Create Invoice'}
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-sm rounded"
-              style={{ backgroundColor: '#F2F3F3', color: 'var(--text2)', border: '1px solid var(--border)', cursor: 'pointer' }}
+              className="px-4 py-2 text-sm rounded-sm bg-bg text-text2 border border-border hover:bg-border transition-colors font-sans"
             >
               Cancel
             </button>
@@ -1302,33 +1374,21 @@ function StatusDropdown({
       <button
         ref={buttonRef}
         onClick={handleOpen}
-        className="text-xs px-2 py-0.5 rounded font-medium"
-        style={{ ...STATUS_STYLE[eff], border: 'none', cursor: 'pointer' }}
+        className={`text-xs px-2 py-0.5 rounded-sm font-medium inline-flex items-center gap-1 ${STATUS_CLASS[eff]}`}
       >
-        {STATUS_LABEL[eff]} ▾
+        {STATUS_LABEL[eff]} <ChevronDown size={11} />
       </button>
       {open && (
         <div
           ref={menuRef}
-          style={{
-            position:        'fixed',
-            top:             pos.top,
-            left:            pos.left,
-            zIndex:          9999,
-            backgroundColor: '#fff',
-            border:          '1px solid var(--border)',
-            boxShadow:       '0 4px 16px rgba(0,0,0,0.14)',
-            borderRadius:    '6px',
-            minWidth:        '110px',
-            padding:         '4px 0',
-          }}
+          style={{ position: 'fixed', top: pos.top, left: pos.left }}
+          className="z-[9999] bg-card border border-border shadow-md rounded-sm min-w-[110px] py-1"
         >
           {STATUSES.filter((s) => s !== invoice.status).map((s) => (
             <button
               key={s}
               onClick={() => { setOpen(false); onStatusChange(invoice.id, s) }}
-              className="w-full text-left text-xs px-3 py-1.5 hover:opacity-75 transition-opacity"
-              style={{ backgroundColor: 'transparent', color: STATUS_STYLE[s].color as string, cursor: 'pointer' }}
+              className={`w-full text-left text-xs px-3 py-1.5 hover:bg-bg transition-colors font-medium ${STATUS_CLASS[s].split(' ')[1]}`}
             >
               {STATUS_LABEL[s]}
             </button>
@@ -1434,7 +1494,7 @@ function InvoicesTab() {
       }
       alert('Reminder sent via WhatsApp')
     } catch {
-      alert('Network error — could not send reminder')
+      alert('Network error - could not send reminder')
     } finally {
       setReminding(null)
     }
@@ -1450,38 +1510,29 @@ function InvoicesTab() {
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
-      <div
-        className="flex items-center justify-between px-6 py-4 flex-shrink-0 bg-white"
-        style={{ borderBottom: '1px solid var(--border)' }}
-      >
+      <div className="flex items-center justify-between px-6 py-4 flex-shrink-0 bg-card border-b border-border">
         <div className="flex items-center gap-5">
           {isLoading ? (
-            <div className="h-4 w-40 rounded animate-pulse" style={{ backgroundColor: '#E0E3E3' }} />
+            <div className="h-4 w-40 rounded-sm animate-pulse bg-border" />
           ) : isError ? (
-            <p className="text-xs" style={{ color: 'var(--red)' }}>Failed to load invoices</p>
+            <p className="text-xs text-red font-sans">Failed to load invoices</p>
           ) : (
             <>
               {overdueCount > 0 && (
-                <p className="text-sm" style={{ color: 'var(--red)' }}>
-                  <span style={{ fontFamily: 'var(--font-ibm-plex-mono), monospace', fontWeight: 600 }}>{overdueCount}</span>
+                <p className="text-sm text-red font-sans">
+                  <span className="font-mono font-semibold">{overdueCount}</span>
                   {' '}overdue
                 </p>
               )}
-              <p className="text-sm" style={{ color: 'var(--text2)' }}>
-                <span style={{ fontFamily: 'var(--font-ibm-plex-mono), monospace', color: 'var(--blue)', fontWeight: 600 }}>
+              <p className="text-sm text-text2 font-sans">
+                <span className="font-mono text-blue font-semibold">
                   {formatInvoiceAmount(totalOutstanding)}
                 </span>
                 {' '}outstanding
               </p>
               <button
                 onClick={() => setShowAll((v) => !v)}
-                className="text-xs px-2.5 py-1 rounded"
-                style={{
-                  backgroundColor: showAll ? '#E8F4FB' : '#F2F3F3',
-                  color:           showAll ? 'var(--blue)' : 'var(--text2)',
-                  border:          `1px solid ${showAll ? 'var(--blue)' : 'var(--border)'}`,
-                  cursor:          'pointer',
-                }}
+                className={`text-xs px-2.5 py-1 rounded-sm border font-sans transition-colors ${showAll ? 'bg-blue/10 text-blue border-blue' : 'bg-bg text-text2 border-border hover:bg-border'}`}
               >
                 {showAll ? 'Showing all' : 'Due this week + overdue'}
               </button>
@@ -1490,50 +1541,45 @@ function InvoicesTab() {
         </div>
         <button
           onClick={() => setNewOpen(true)}
-          className="text-sm px-4 py-2 rounded font-medium"
-          style={{ backgroundColor: 'var(--blue)', color: '#fff', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-inter), sans-serif' }}
+          className="text-sm px-4 py-2 rounded-sm font-medium bg-blue text-white hover:bg-blue/90 transition-colors font-sans"
         >
           + New Invoice
         </button>
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto p-6" style={{ backgroundColor: 'var(--bg)' }}>
+      <div className="flex-1 overflow-auto p-6 bg-bg">
         {isLoading ? (
           <div className="flex flex-col gap-2">
             {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="h-12 rounded animate-pulse" style={{ backgroundColor: '#E0E3E3' }} />
+              <div key={i} className="h-12 rounded-sm animate-pulse bg-border" />
             ))}
           </div>
         ) : invoices.length === 0 ? (
-          <div
-            className="flex flex-col items-center justify-center rounded"
-            style={{ height: '200px', backgroundColor: '#fff', border: '1px solid var(--border)' }}
-          >
-            <p className="text-sm" style={{ color: 'var(--text3)' }}>
+          <div className="flex flex-col items-center justify-center rounded-sm h-[200px] bg-card border border-border">
+            <p className="text-sm text-text3 font-sans">
               {showAll ? 'No invoices yet' : 'No overdue or upcoming invoices'}
             </p>
             {!showAll && (
               <button
                 onClick={() => setShowAll(true)}
-                className="text-xs mt-2 underline"
-                style={{ color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer' }}
+                className="text-xs mt-2 underline text-blue font-sans hover:text-blue/80 transition-colors"
               >
                 Show all invoices
               </button>
             )}
           </div>
         ) : (
-          <div className="bg-white rounded" style={{ border: '1px solid var(--border)', overflow: 'hidden' }}>
-            <table className="w-full" style={{ borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
+          <div className="bg-card rounded-sm border border-border overflow-hidden">
+            <table className="w-full border-collapse text-[0.8125rem] font-sans">
               <thead>
-                <tr style={{ backgroundColor: '#F2F3F3', borderBottom: '1px solid var(--border)' }}>
-                  <th className="text-left px-4 py-3" style={{ color: 'var(--text2)', fontWeight: 600, fontSize: '0.75rem' }}>REF</th>
-                  <th className="text-left px-4 py-3" style={{ color: 'var(--text2)', fontWeight: 600, fontSize: '0.75rem' }}>CLIENT</th>
-                  <th className="text-right px-4 py-3" style={{ color: 'var(--text2)', fontWeight: 600, fontSize: '0.75rem' }}>AMOUNT</th>
-                  <th className="text-left px-4 py-3" style={{ color: 'var(--text2)', fontWeight: 600, fontSize: '0.75rem' }}>DUE DATE</th>
-                  <th className="text-left px-4 py-3" style={{ color: 'var(--text2)', fontWeight: 600, fontSize: '0.75rem' }}>STATUS</th>
-                  <th className="text-right px-4 py-3" style={{ color: 'var(--text2)', fontWeight: 600, fontSize: '0.75rem' }}>ACTIONS</th>
+                <tr className="bg-bg border-b border-border">
+                  <th className="text-left px-4 py-3 text-text2 font-semibold text-xs">REF</th>
+                  <th className="text-left px-4 py-3 text-text2 font-semibold text-xs">CLIENT</th>
+                  <th className="text-right px-4 py-3 text-text2 font-semibold text-xs">AMOUNT</th>
+                  <th className="text-left px-4 py-3 text-text2 font-semibold text-xs">DUE DATE</th>
+                  <th className="text-left px-4 py-3 text-text2 font-semibold text-xs">STATUS</th>
+                  <th className="text-right px-4 py-3 text-text2 font-semibold text-xs">ACTIONS</th>
                 </tr>
               </thead>
               <tbody>
@@ -1546,50 +1592,29 @@ function InvoicesTab() {
                   return (
                     <tr
                       key={inv.id}
-                      style={{
-                        borderBottom: idx < invoices.length - 1 ? '1px solid var(--border)' : 'none',
-                        backgroundColor: '#fff',
-                      }}
+                      className={`bg-card ${idx < invoices.length - 1 ? 'border-b border-border' : ''}`}
                     >
                       <td className="px-4 py-3">
-                        <span
-                          style={{
-                            fontFamily: 'var(--font-ibm-plex-mono), monospace',
-                            fontSize: '0.8125rem',
-                            color: 'var(--text1)',
-                            fontWeight: 500,
-                          }}
-                        >
+                        <span className="font-mono text-[0.8125rem] text-text1 font-medium">
                           {inv.invoice_no}
                         </span>
                       </td>
 
                       <td className="px-4 py-3">
-                        <p className="font-medium" style={{ color: 'var(--text1)' }}>{inv.client_name || '—'}</p>
+                        <p className="font-medium text-text1">{inv.client_name || '-'}</p>
                         {inv.client_org && (
-                          <p className="text-xs" style={{ color: 'var(--text3)' }}>{inv.client_org}</p>
+                          <p className="text-xs text-text3">{inv.client_org}</p>
                         )}
                       </td>
 
                       <td className="px-4 py-3 text-right">
-                        <span
-                          style={{
-                            fontFamily: 'var(--font-ibm-plex-mono), monospace',
-                            fontWeight: 600,
-                            color: eff === 'overdue' ? 'var(--red)' : 'var(--text1)',
-                          }}
-                        >
+                        <span className={`font-mono font-semibold ${eff === 'overdue' ? 'text-red' : 'text-text1'}`}>
                           {formatInvoiceAmount(inv.total)}
                         </span>
                       </td>
 
                       <td className="px-4 py-3">
-                        <span
-                          style={{
-                            fontFamily: 'var(--font-ibm-plex-mono), monospace',
-                            color: eff === 'overdue' ? 'var(--red)' : 'var(--text2)',
-                          }}
-                        >
+                        <span className={`font-mono ${eff === 'overdue' ? 'text-red' : 'text-text2'}`}>
                           {fmtDate(inv.due_date)}
                         </span>
                       </td>
@@ -1606,13 +1631,7 @@ function InvoicesTab() {
                           <button
                             onClick={() => downloadPdf(inv.id, inv.invoice_no)}
                             disabled={isDl}
-                            className="text-xs px-2.5 py-1 rounded disabled:opacity-50"
-                            style={{
-                              backgroundColor: '#F2F3F3',
-                              color: 'var(--text1)',
-                              border: '1px solid var(--border)',
-                              cursor: isDl ? 'not-allowed' : 'pointer',
-                            }}
+                            className="text-xs px-2.5 py-1 rounded-sm disabled:opacity-50 bg-bg text-text1 border border-border hover:bg-border transition-colors font-sans"
                           >
                             {isDl ? 'Generating…' : 'PDF'}
                           </button>
@@ -1621,13 +1640,7 @@ function InvoicesTab() {
                             <button
                               onClick={() => sendReminder(inv.id)}
                               disabled={isRmd}
-                              className="text-xs px-2.5 py-1 rounded disabled:opacity-50"
-                              style={{
-                                backgroundColor: '#FFF9F5',
-                                color: 'var(--amber)',
-                                border: '1px solid #E8820C',
-                                cursor: isRmd ? 'not-allowed' : 'pointer',
-                              }}
+                              className="text-xs px-2.5 py-1 rounded-sm disabled:opacity-50 bg-amber/10 text-amber border border-amber/30 hover:bg-amber/20 transition-colors font-sans"
                             >
                               {isRmd ? 'Sending…' : 'Remind'}
                             </button>
@@ -1663,35 +1676,33 @@ function InvoicesTab() {
 // ── Lead badge + status chips ─────────────────────────────────────────────────
 
 function BadgeChip({ badge }: { badge: LeadBadge | null }) {
-  if (!badge) return <span style={{ color: 'var(--text3)' }}>—</span>
-  const s: Record<LeadBadge, React.CSSProperties> = {
-    hot:  { backgroundColor: '#FEF0EE', color: '#D13212' },
-    warm: { backgroundColor: '#FEF8EE', color: '#E8820C' },
-    cold: { backgroundColor: '#F2F3F3', color: '#687078' },
+  if (!badge) return <span className="text-text3">-</span>
+  const s: Record<LeadBadge, string> = {
+    hot:  'bg-red/10 text-red',
+    warm: 'bg-amber/10 text-amber',
+    cold: 'bg-border/50 text-text2',
   }
   return (
     <span
-      className="text-xs px-2 py-0.5 font-semibold uppercase"
-      style={{ ...s[badge], borderRadius: '3px', letterSpacing: '0.06em', fontFamily: 'var(--font-ibm-plex-mono), monospace' }}
+      className={`text-xs px-2 py-0.5 font-semibold uppercase rounded-[3px] tracking-widest font-mono ${s[badge]}`}
     >
       {badge}
     </span>
   )
 }
 
-const LEAD_STATUS_STYLE: Record<LeadStatus, React.CSSProperties> = {
-  new:       { backgroundColor: '#E8F4FB', color: '#0073BB' },
-  contacted: { backgroundColor: '#EEF4FF', color: '#5850EC' },
-  qualified: { backgroundColor: '#EBF5E8', color: '#1D8102' },
-  converted: { backgroundColor: '#ECFDF5', color: '#065F46' },
-  lost:      { backgroundColor: '#FEF0EE', color: '#D13212' },
+const LEAD_STATUS_CLASS: Record<LeadStatus, string> = {
+  new:       'bg-blue/10 text-blue',
+  contacted: 'bg-blue/20 text-blue',
+  qualified: 'bg-green/10 text-green',
+  converted: 'bg-green/20 text-green',
+  lost:      'bg-red/10 text-red',
 }
 
 function LeadStatusChip({ status }: { status: LeadStatus }) {
   return (
     <span
-      className="text-xs px-2 py-0.5 font-medium capitalize"
-      style={{ ...LEAD_STATUS_STYLE[status], borderRadius: '3px' }}
+      className={`text-xs px-2 py-0.5 font-medium capitalize rounded-sm font-sans ${LEAD_STATUS_CLASS[status]}`}
     >
       {status}
     </span>
@@ -1758,50 +1769,41 @@ function LeadDetailSlideOver({
 
   const detailRows: [string, string][] = [
     ['Company',      lead.company_name],
-    ['Organisation', lead.org_name || '—'],
-    ['Email',        lead.email || '—'],
-    ['Phone',        lead.phone || '—'],
-    ['Source',       lead.source ? lead.source.charAt(0).toUpperCase() + lead.source.slice(1) : '—'],
-    ['Score',        lead.score != null ? String(lead.score) : '—'],
+    ['Organisation', lead.org_name || '-'],
+    ['Email',        lead.email || '-'],
+    ['Phone',        lead.phone || '-'],
+    ['Source',       lead.source ? lead.source.charAt(0).toUpperCase() + lead.source.slice(1) : '-'],
+    ['Score',        lead.score != null ? String(lead.score) : '-'],
     ['Owner',        lead.owner_name || 'Unassigned'],
-    ['Last Contact', lead.last_contact_at ? fmtDate(lead.last_contact_at) : '—'],
+    ['Last Contact', lead.last_contact_at ? fmtDate(lead.last_contact_at) : '-'],
     ['Created',      fmtDate(lead.created_at)],
   ]
 
+  const inputClass = "h-9 border border-border bg-card text-text1 rounded-sm outline-none px-3 text-sm w-full font-sans focus:border-blue transition-colors"
+  const labelClass = "block text-xs font-medium mb-1 text-text2 font-sans"
+
   return (
     <>
-      <div className="fixed inset-0 z-40" style={{ backgroundColor: 'rgba(0,0,0,0.35)' }} onClick={onClose} />
-      <div
-        className="fixed right-0 top-0 h-full z-50 flex flex-col"
-        style={{ width: '520px', backgroundColor: '#fff', boxShadow: '-4px 0 24px rgba(0,0,0,0.14)' }}
-      >
-        <div
-          className="flex items-center justify-between px-6 py-4 flex-shrink-0"
-          style={{ borderBottom: '1px solid var(--border)' }}
-        >
+      <div className="fixed inset-0 z-40 bg-black/35" onClick={onClose} />
+      <div className="fixed right-0 top-0 h-full z-50 flex flex-col w-[520px] bg-bg shadow-[-4px_0_24px_rgba(0,0,0,0.14)]">
+        <div className="flex items-center justify-between px-6 py-4 flex-shrink-0 border-b border-border bg-card">
           <div className="flex items-center gap-2 min-w-0">
-            <h2 className="text-base font-semibold truncate" style={{ fontFamily: 'var(--font-syne), sans-serif', color: 'var(--text1)' }}>
+            <h2 className="text-base font-semibold truncate font-sans text-text1">
               {lead.name}
             </h2>
             <BadgeChip badge={lead.badge} />
           </div>
-          <button onClick={onClose} style={{ color: 'var(--text2)', fontSize: '1.1rem', background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0 }}>✕</button>
+          <button onClick={onClose} className="text-text2 hover:text-text1 transition-colors flex-shrink-0"><X size={18} /></button>
         </div>
 
         <div className="flex-1 overflow-auto px-6 py-5 flex flex-col gap-5">
-          <LeadStatusChip status={isConverted ? 'converted' : lead.status} />
+          <div><LeadStatusChip status={isConverted ? 'converted' : lead.status} /></div>
 
           <div className="grid grid-cols-2 gap-x-6 gap-y-3">
             {detailRows.map(([label, value]) => (
               <div key={label}>
-                <p className="text-xs font-medium uppercase mb-0.5" style={{ color: 'var(--text3)', letterSpacing: '0.06em' }}>{label}</p>
-                <p
-                  className="text-sm"
-                  style={{
-                    color: 'var(--text1)',
-                    fontFamily: ['Score', 'Last Contact', 'Created'].includes(label) ? 'var(--font-ibm-plex-mono), monospace' : 'inherit',
-                  }}
-                >
+                <p className="text-xs font-medium uppercase mb-0.5 text-text3 tracking-widest font-sans">{label}</p>
+                <p className={`text-sm text-text1 ${['Score', 'Last Contact', 'Created'].includes(label) ? 'font-mono' : 'font-sans'}`}>
                   {value}
                 </p>
               </div>
@@ -1810,37 +1812,30 @@ function LeadDetailSlideOver({
 
           {lead.notes && (
             <div>
-              <p className="text-xs font-medium uppercase mb-1" style={{ color: 'var(--text3)', letterSpacing: '0.06em' }}>Notes</p>
-              <p className="text-sm whitespace-pre-wrap" style={{ color: 'var(--text2)', lineHeight: 1.6 }}>{lead.notes}</p>
+              <p className="text-xs font-medium uppercase mb-1 text-text3 tracking-widest font-sans">Notes</p>
+              <p className="text-sm whitespace-pre-wrap text-text2 font-sans leading-relaxed">{lead.notes}</p>
             </div>
           )}
 
           {/* Convert to Deal section */}
-          <div
-            style={{
-              border: '1px solid var(--border)',
-              borderRadius: '6px',
-              padding: '14px',
-              backgroundColor: isConverted ? '#ECFDF5' : '#FAFAFA',
-            }}
-          >
+          <div className={`border border-border rounded-sm p-4 ${isConverted ? 'bg-green/10' : 'bg-card'}`}>
             {isConverted ? (
-              <p className="text-sm font-medium" style={{ color: '#065F46' }}>✓ Converted to deal</p>
+              <p className="text-sm font-medium flex items-center gap-1.5 text-green font-sans"><CheckCircle2 size={14} /> Converted to deal</p>
             ) : convertOpen ? (
               <form onSubmit={handleConvert} className="flex flex-col gap-3">
-                <p className="text-sm font-semibold" style={{ color: 'var(--text1)' }}>Convert to Deal</p>
+                <p className="text-sm font-semibold text-text1 font-sans">Convert to Deal</p>
                 <div>
-                  <label style={labelStyle}>Deal Name</label>
+                  <label className={labelClass}>Deal Name</label>
                   <input
                     type="text"
                     value={convertForm.deal_name}
                     onChange={(e) => setConvertForm(f => ({ ...f, deal_name: e.target.value }))}
-                    style={inputStyle}
+                    className={inputClass}
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label style={labelStyle}>Value (₹, optional)</label>
+                    <label className={labelClass}>Value (₹, optional)</label>
                     <input
                       type="number"
                       value={convertForm.value}
@@ -1848,42 +1843,36 @@ function LeadDetailSlideOver({
                       placeholder="0.00"
                       min="0"
                       step="0.01"
-                      style={{ ...inputStyle, fontFamily: 'var(--font-ibm-plex-mono), monospace' }}
+                      className="h-9 border border-border bg-card text-text1 rounded-sm outline-none px-3 text-sm w-full font-mono focus:border-blue transition-colors"
                     />
                   </div>
                   <div>
-                    <label style={labelStyle}>Service Type</label>
+                    <label className={labelClass}>Service Type</label>
                     <select
                       value={convertForm.service_type}
                       onChange={(e) => setConvertForm(f => ({ ...f, service_type: e.target.value }))}
-                      style={inputStyle}
+                      className={inputClass}
                     >
-                      <option value="">— Select —</option>
+                      <option value="">- Select -</option>
                       {Object.entries(SERVICE_LABELS).map(([k, v]) => (
                         <option key={k} value={k}>{v}</option>
                       ))}
                     </select>
                   </div>
                 </div>
-                {convertError && <p className="text-xs" style={{ color: 'var(--red)' }}>{convertError}</p>}
+                {convertError && <p className="text-xs text-red font-sans">{convertError}</p>}
                 <div className="flex gap-2">
                   <button
                     type="submit"
                     disabled={converting}
-                    className="flex-1 text-sm py-2 font-medium"
-                    style={{
-                      backgroundColor: converting ? '#ccc' : 'var(--green)',
-                      color: '#fff', border: 'none', borderRadius: '6px',
-                      cursor: converting ? 'not-allowed' : 'pointer',
-                    }}
+                    className="flex-1 text-sm py-2 font-medium rounded-sm disabled:opacity-50 bg-green text-white hover:bg-green/90 transition-colors font-sans"
                   >
                     {converting ? 'Converting…' : 'Confirm Convert'}
                   </button>
                   <button
                     type="button"
                     onClick={() => setConvertOpen(false)}
-                    className="text-sm px-4 py-2"
-                    style={{ border: '1px solid var(--border)', borderRadius: '6px', background: '#fff', cursor: 'pointer', color: 'var(--text2)' }}
+                    className="text-sm px-4 py-2 rounded-sm bg-bg text-text2 border border-border hover:bg-border transition-colors font-sans"
                   >
                     Cancel
                   </button>
@@ -1892,10 +1881,9 @@ function LeadDetailSlideOver({
             ) : (
               <button
                 onClick={() => setConvertOpen(true)}
-                className="text-sm px-4 py-2 font-medium"
-                style={{ border: '1px solid var(--blue)', borderRadius: '6px', color: 'var(--blue)', background: '#fff', cursor: 'pointer' }}
+                className="text-sm px-4 py-2 font-medium border border-blue rounded-sm text-blue bg-card hover:bg-blue/10 transition-colors inline-flex items-center gap-1.5 font-sans"
               >
-                Convert to Deal →
+                Convert to Deal <ArrowRight size={14} />
               </button>
             )}
           </div>
@@ -1959,52 +1947,49 @@ function AddLeadSlideOver({
 
   if (!open) return null
 
+  const inputClass = "h-9 border border-border bg-card text-text1 rounded-sm outline-none px-3 text-sm w-full font-sans focus:border-blue transition-colors"
+  const labelClass = "block text-xs font-medium mb-1 text-text2 font-sans"
+
   return (
     <>
-      <div className="fixed inset-0 z-40" style={{ backgroundColor: 'rgba(0,0,0,0.35)' }} onClick={onClose} />
-      <div
-        className="fixed right-0 top-0 h-full z-50 flex flex-col"
-        style={{ width: '480px', backgroundColor: '#fff', boxShadow: '-4px 0 24px rgba(0,0,0,0.14)' }}
-      >
-        <div
-          className="flex items-center justify-between px-6 py-4 flex-shrink-0"
-          style={{ borderBottom: '1px solid var(--border)' }}
-        >
-          <h2 className="text-base font-semibold" style={{ fontFamily: 'var(--font-syne), sans-serif', color: 'var(--text1)' }}>Add Lead</h2>
-          <button onClick={onClose} style={{ color: 'var(--text2)', fontSize: '1.1rem', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
+      <div className="fixed inset-0 z-40 bg-black/35" onClick={onClose} />
+      <div className="fixed right-0 top-0 h-full z-50 flex flex-col w-[480px] bg-bg shadow-[-4px_0_24px_rgba(0,0,0,0.14)]">
+        <div className="flex items-center justify-between px-6 py-4 flex-shrink-0 border-b border-border bg-card">
+          <h2 className="text-base font-semibold font-sans text-text1">Add Lead</h2>
+          <button onClick={onClose} className="text-text2 hover:text-text1 transition-colors"><X size={18} /></button>
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-auto">
           <div className="px-6 py-5 flex flex-col gap-4 flex-1">
             <div>
-              <label style={labelStyle}>Company *</label>
-              <select value={form.company_id} onChange={(e) => setForm(f => ({ ...f, company_id: e.target.value }))} style={inputStyle}>
+              <label className={labelClass}>Company *</label>
+              <select value={form.company_id} onChange={(e) => setForm(f => ({ ...f, company_id: e.target.value }))} className={inputClass}>
                 {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
             <div>
-              <label style={labelStyle}>Name *</label>
-              <input type="text" value={form.name} onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Contact name" style={inputStyle} />
+              <label className={labelClass}>Name *</label>
+              <input type="text" value={form.name} onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Contact name" className={inputClass} />
             </div>
             <div>
-              <label style={labelStyle}>Organisation</label>
-              <input type="text" value={form.org_name} onChange={(e) => setForm(f => ({ ...f, org_name: e.target.value }))} placeholder="Company / org name" style={inputStyle} />
+              <label className={labelClass}>Organisation</label>
+              <input type="text" value={form.org_name} onChange={(e) => setForm(f => ({ ...f, org_name: e.target.value }))} placeholder="Company / org name" className={inputClass} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label style={labelStyle}>Email</label>
-                <input type="email" value={form.email} onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))} placeholder="email@example.com" style={inputStyle} />
+                <label className={labelClass}>Email</label>
+                <input type="email" value={form.email} onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))} placeholder="email@example.com" className={inputClass} />
               </div>
               <div>
-                <label style={labelStyle}>Phone</label>
-                <input type="tel" value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="+91 …" style={inputStyle} />
+                <label className={labelClass}>Phone</label>
+                <input type="tel" value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="+91 …" className={inputClass} />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label style={labelStyle}>Source</label>
-                <select value={form.source} onChange={(e) => setForm(f => ({ ...f, source: e.target.value }))} style={inputStyle}>
-                  <option value="">— None —</option>
+                <label className={labelClass}>Source</label>
+                <select value={form.source} onChange={(e) => setForm(f => ({ ...f, source: e.target.value }))} className={inputClass}>
+                  <option value="">- None -</option>
                   <option value="inbound">Inbound</option>
                   <option value="outbound">Outbound</option>
                   <option value="referral">Referral</option>
@@ -2012,9 +1997,9 @@ function AddLeadSlideOver({
                 </select>
               </div>
               <div>
-                <label style={labelStyle}>Score</label>
-                <select value={form.badge} onChange={(e) => setForm(f => ({ ...f, badge: e.target.value }))} style={inputStyle}>
-                  <option value="">— None —</option>
+                <label className={labelClass}>Score</label>
+                <select value={form.badge} onChange={(e) => setForm(f => ({ ...f, badge: e.target.value }))} className={inputClass}>
+                  <option value="">- None -</option>
                   <option value="hot">Hot</option>
                   <option value="warm">Warm</option>
                   <option value="cold">Cold</option>
@@ -2022,37 +2007,35 @@ function AddLeadSlideOver({
               </div>
             </div>
             <div>
-              <label style={labelStyle}>Owner</label>
-              <select value={form.owner_id} onChange={(e) => setForm(f => ({ ...f, owner_id: e.target.value }))} style={inputStyle}>
-                <option value="">— Assign to me —</option>
+              <label className={labelClass}>Owner</label>
+              <select value={form.owner_id} onChange={(e) => setForm(f => ({ ...f, owner_id: e.target.value }))} className={inputClass}>
+                <option value="">- Assign to me -</option>
                 {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select>
             </div>
             <div>
-              <label style={labelStyle}>Notes</label>
+              <label className={labelClass}>Notes</label>
               <textarea
                 value={form.notes}
                 onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))}
                 rows={3}
                 placeholder="Initial notes…"
-                style={{ ...inputStyle, height: 'auto', padding: '8px 12px', resize: 'vertical' }}
+                className="w-full border border-border bg-card text-text1 rounded-sm px-3 py-2 text-sm font-sans focus:outline-none focus:border-blue transition-colors h-auto resize-y"
               />
             </div>
-            {error && <p className="text-xs" style={{ color: 'var(--red)' }}>{error}</p>}
+            {error && <p className="text-xs text-red font-sans">{error}</p>}
           </div>
 
-          <div className="px-6 py-4 flex gap-3 flex-shrink-0" style={{ borderTop: '1px solid var(--border)' }}>
+          <div className="px-6 py-4 flex gap-3 flex-shrink-0 border-t border-border bg-card">
             <button
               type="submit" disabled={saving}
-              className="flex-1 text-sm py-2 font-medium"
-              style={{ backgroundColor: saving ? '#ccc' : 'var(--blue)', color: '#fff', border: 'none', borderRadius: '6px', cursor: saving ? 'not-allowed' : 'pointer' }}
+              className="flex-1 text-sm py-2 font-medium rounded-sm disabled:opacity-50 bg-blue text-white hover:bg-blue/90 transition-colors font-sans"
             >
               {saving ? 'Saving…' : 'Add Lead'}
             </button>
             <button
               type="button" onClick={onClose}
-              className="text-sm px-4 py-2"
-              style={{ border: '1px solid var(--border)', borderRadius: '6px', background: '#fff', cursor: 'pointer', color: 'var(--text2)' }}
+              className="text-sm px-4 py-2 rounded-sm bg-bg text-text2 border border-border hover:bg-border transition-colors font-sans"
             >
               Cancel
             </button>
@@ -2111,28 +2094,25 @@ function LeadsTab() {
   const openCount = leads.filter(l => l.status !== 'converted' && l.status !== 'lost').length
 
   return (
-    <div className="flex flex-col h-full">
-      <div
-        className="flex items-center justify-between px-6 py-3 flex-shrink-0"
-        style={{ borderBottom: '1px solid var(--border)', backgroundColor: '#fff' }}
-      >
+    <div className="flex flex-col h-full bg-bg">
+      <div className="flex items-center justify-between px-6 py-4 flex-shrink-0 bg-card border-b border-border">
         <div className="flex items-center gap-4">
           <input
             type="text"
             placeholder="Filter leads…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            style={{ ...inputStyle, width: '220px' }}
+            className="h-9 w-[220px] border border-border bg-card text-text1 rounded-sm px-3 text-sm font-sans focus:outline-none focus:border-blue transition-colors"
           />
           {!isLoading && !isError && (
             <div className="flex items-center gap-3">
-              <span className="text-sm" style={{ color: 'var(--text2)' }}>
-                <span style={{ fontFamily: 'var(--font-ibm-plex-mono), monospace', fontWeight: 600, color: 'var(--text1)' }}>{openCount}</span>
+              <span className="text-sm text-text2 font-sans">
+                <span className="font-mono font-semibold text-text1">{openCount}</span>
                 {' '}open
               </span>
               {hotCount > 0 && (
-                <span className="text-sm" style={{ color: 'var(--text2)' }}>
-                  <span style={{ fontFamily: 'var(--font-ibm-plex-mono), monospace', fontWeight: 600, color: '#D13212' }}>{hotCount}</span>
+                <span className="text-sm text-text2 font-sans">
+                  <span className="font-mono font-semibold text-red">{hotCount}</span>
                   {' '}hot
                 </span>
               )}
@@ -2141,52 +2121,54 @@ function LeadsTab() {
         </div>
         <button
           onClick={() => setAddOpen(true)}
-          className="text-sm px-4 py-2 font-medium"
-          style={{ backgroundColor: 'var(--blue)', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontFamily: 'var(--font-inter), sans-serif' }}
+          className="text-sm px-4 py-2 font-medium rounded-sm bg-blue text-white hover:bg-blue/90 transition-colors font-sans"
         >
           + Add Lead
         </button>
       </div>
 
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto p-6">
         {isLoading ? (
-          <div className="p-6 flex flex-col gap-2">
-            {[1,2,3,4].map(i => <div key={i} className="h-10 rounded animate-pulse" style={{ backgroundColor: '#E0E3E3' }} />)}
+          <div className="flex flex-col gap-2">
+            {[1,2,3,4].map(i => <div key={i} className="h-10 rounded-sm bg-border animate-pulse" />)}
           </div>
         ) : isError ? (
-          <div className="p-6"><p className="text-sm" style={{ color: 'var(--red)' }}>Failed to load leads</p></div>
+          <p className="text-sm text-red font-sans">Failed to load leads</p>
         ) : filtered.length === 0 ? (
-          <div className="p-6"><p className="text-sm" style={{ color: 'var(--text3)' }}>No leads found{filter ? ' matching that filter' : ''}.</p></div>
+          <div className="flex flex-col items-center justify-center rounded-sm h-[200px] bg-card border border-border">
+            <p className="text-sm text-text3 font-sans">No leads found{filter ? ' matching that filter' : ''}.</p>
+          </div>
         ) : (
-          <table className="w-full text-sm" style={{ borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ backgroundColor: '#F2F3F3', borderBottom: '1px solid var(--border)' }}>
-                {['Lead', 'Org', 'Source', 'Score', 'Status', 'Last Contact', 'Owner'].map(h => (
-                  <th key={h} className="text-left px-4 py-2 font-medium text-xs uppercase" style={{ color: 'var(--text2)', letterSpacing: '0.04em' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(lead => (
-                <tr
-                  key={lead.id}
-                  onClick={() => setSelectedLead(lead)}
-                  className="cursor-pointer hover:bg-gray-50"
-                  style={{ borderBottom: '1px solid var(--border)' }}
-                >
-                  <td className="px-4 py-3 font-medium" style={{ color: 'var(--text1)' }}>{lead.name}</td>
-                  <td className="px-4 py-3" style={{ color: 'var(--text2)' }}>{lead.org_name || '—'}</td>
-                  <td className="px-4 py-3 capitalize" style={{ color: 'var(--text3)' }}>{lead.source || '—'}</td>
-                  <td className="px-4 py-3"><BadgeChip badge={lead.badge} /></td>
-                  <td className="px-4 py-3"><LeadStatusChip status={lead.status} /></td>
-                  <td className="px-4 py-3" style={{ fontFamily: 'var(--font-ibm-plex-mono), monospace', color: 'var(--text2)', fontSize: '0.8rem' }}>
-                    {lead.last_contact_at ? fmtDate(lead.last_contact_at) : '—'}
-                  </td>
-                  <td className="px-4 py-3" style={{ color: 'var(--text2)' }}>{lead.owner_name || '—'}</td>
+          <div className="bg-card rounded-sm border border-border overflow-hidden">
+            <table className="w-full text-sm border-collapse font-sans text-[0.8125rem]">
+              <thead>
+                <tr className="bg-bg border-b border-border">
+                  {['Lead', 'Org', 'Source', 'Score', 'Status', 'Last Contact', 'Owner'].map(h => (
+                    <th key={h} className="text-left px-4 py-3 font-semibold text-xs text-text2">{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filtered.map((lead, idx) => (
+                  <tr
+                    key={lead.id}
+                    onClick={() => setSelectedLead(lead)}
+                    className={`bg-card cursor-pointer hover:bg-bg transition-colors ${idx < filtered.length - 1 ? 'border-b border-border' : ''}`}
+                  >
+                    <td className="px-4 py-3 font-medium text-text1">{lead.name}</td>
+                    <td className="px-4 py-3 text-text2">{lead.org_name || '-'}</td>
+                    <td className="px-4 py-3 capitalize text-text3">{lead.source || '-'}</td>
+                    <td className="px-4 py-3"><BadgeChip badge={lead.badge} /></td>
+                    <td className="px-4 py-3"><LeadStatusChip status={lead.status} /></td>
+                    <td className="px-4 py-3 font-mono text-text2 text-[0.8rem]">
+                      {lead.last_contact_at ? fmtDate(lead.last_contact_at) : '-'}
+                    </td>
+                    <td className="px-4 py-3 text-text2">{lead.owner_name || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -2259,82 +2241,77 @@ function AddClientSlideOver({
 
   if (!open) return null
 
+  const inputClass = "h-9 border border-border bg-card text-text1 rounded-sm outline-none px-3 text-sm w-full font-sans focus:border-blue transition-colors"
+  const labelClass = "block text-xs font-medium mb-1 text-text2 font-sans"
+
   return (
     <>
-      <div className="fixed inset-0 z-40" style={{ backgroundColor: 'rgba(0,0,0,0.35)' }} onClick={onClose} />
-      <div
-        className="fixed right-0 top-0 h-full z-50 flex flex-col"
-        style={{ width: '480px', backgroundColor: '#fff', boxShadow: '-4px 0 24px rgba(0,0,0,0.14)' }}
-      >
-        <div
-          className="flex items-center justify-between px-6 py-4 flex-shrink-0"
-          style={{ borderBottom: '1px solid var(--border)' }}
-        >
-          <h2 className="text-base font-semibold" style={{ fontFamily: 'var(--font-syne), sans-serif', color: 'var(--text1)' }}>Add Client</h2>
-          <button onClick={onClose} style={{ color: 'var(--text2)', fontSize: '1.1rem', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
+      <div className="fixed inset-0 z-40 bg-black/35" onClick={onClose} />
+      <div className="fixed right-0 top-0 h-full z-50 flex flex-col w-[480px] bg-bg shadow-[-4px_0_24px_rgba(0,0,0,0.14)]">
+        <div className="flex items-center justify-between px-6 py-4 flex-shrink-0 border-b border-border bg-card">
+          <h2 className="text-base font-semibold font-sans text-text1">Add Client</h2>
+          <button onClick={onClose} className="text-text2 hover:text-text1 transition-colors"><X size={18} /></button>
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-auto">
           <div className="px-6 py-5 flex flex-col gap-4 flex-1">
             <div>
-              <label style={labelStyle}>Company *</label>
-              <select value={form.company_id} onChange={(e) => setForm(f => ({ ...f, company_id: e.target.value }))} style={inputStyle}>
+              <label className={labelClass}>Company *</label>
+              <select value={form.company_id} onChange={(e) => setForm(f => ({ ...f, company_id: e.target.value }))} className={inputClass}>
                 {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
             <div>
-              <label style={labelStyle}>Name *</label>
-              <input type="text" value={form.name} onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Contact name" style={inputStyle} />
+              <label className={labelClass}>Name *</label>
+              <input type="text" value={form.name} onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Contact name" className={inputClass} />
             </div>
             <div>
-              <label style={labelStyle}>Organisation</label>
-              <input type="text" value={form.org_name} onChange={(e) => setForm(f => ({ ...f, org_name: e.target.value }))} placeholder="Company / org name" style={inputStyle} />
+              <label className={labelClass}>Organisation</label>
+              <input type="text" value={form.org_name} onChange={(e) => setForm(f => ({ ...f, org_name: e.target.value }))} placeholder="Company / org name" className={inputClass} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label style={labelStyle}>Email</label>
-                <input type="email" value={form.email} onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))} placeholder="email@example.com" style={inputStyle} />
+                <label className={labelClass}>Email</label>
+                <input type="email" value={form.email} onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))} placeholder="email@example.com" className={inputClass} />
               </div>
               <div>
-                <label style={labelStyle}>Phone</label>
-                <input type="tel" value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="+91 …" style={inputStyle} />
+                <label className={labelClass}>Phone</label>
+                <input type="tel" value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="+91 …" className={inputClass} />
               </div>
             </div>
             <div>
-              <label style={labelStyle}>Address</label>
+              <label className={labelClass}>Address</label>
               <textarea
                 value={form.address}
                 onChange={(e) => setForm(f => ({ ...f, address: e.target.value }))}
                 rows={2}
                 placeholder="Street, city, state, PIN"
-                style={{ ...inputStyle, height: 'auto', padding: '8px 12px', resize: 'vertical' }}
+                className="w-full border border-border bg-card text-text1 rounded-sm px-3 py-2 text-sm font-sans focus:outline-none focus:border-blue transition-colors h-auto resize-y"
               />
             </div>
             <div>
-              <label style={labelStyle}>GSTIN</label>
+              <label className={labelClass}>GSTIN</label>
               <input
                 type="text"
                 value={form.gstin}
                 onChange={(e) => setForm(f => ({ ...f, gstin: e.target.value.toUpperCase() }))}
                 placeholder="22AAAAA0000A1Z5"
-                style={{ ...inputStyle, fontFamily: 'var(--font-ibm-plex-mono), monospace' }}
+                className="h-9 border border-border bg-card text-text1 rounded-sm outline-none px-3 text-sm w-full font-mono focus:border-blue transition-colors uppercase"
               />
             </div>
-            {error && <p className="text-xs" style={{ color: 'var(--red)' }}>{error}</p>}
+            {error && <p className="text-xs text-red font-sans">{error}</p>}
           </div>
 
-          <div className="px-6 py-4 flex gap-3 flex-shrink-0" style={{ borderTop: '1px solid var(--border)' }}>
+          <div className="px-6 py-4 flex gap-3 flex-shrink-0 border-t border-border bg-card">
             <button
               type="submit" disabled={saving}
-              className="flex-1 text-sm py-2 font-medium"
-              style={{ backgroundColor: saving ? '#ccc' : 'var(--blue)', color: '#fff', border: 'none', borderRadius: '6px', cursor: saving ? 'not-allowed' : 'pointer' }}
+              className="flex-1 text-sm py-2 font-medium rounded-sm disabled:opacity-50 bg-blue text-white hover:bg-blue/90 transition-colors font-sans"
             >
               {saving ? 'Saving…' : 'Add Client'}
             </button>
             <button
               type="button" onClick={onClose}
-              className="text-sm px-4 py-2"
-              style={{ border: '1px solid var(--border)', borderRadius: '6px', background: '#fff', cursor: 'pointer', color: 'var(--text2)' }}
+              className="text-sm px-4 py-2 rounded-sm bg-bg text-text2 border border-border hover:bg-border transition-colors font-sans"
             >
               Cancel
             </button>
@@ -2380,75 +2357,75 @@ function ClientsTab() {
   )
 
   return (
-    <div className="flex flex-col h-full">
-      <div
-        className="flex items-center justify-between px-6 py-3 flex-shrink-0"
-        style={{ borderBottom: '1px solid var(--border)', backgroundColor: '#fff' }}
-      >
+    <div className="flex flex-col h-full bg-bg">
+      <div className="flex items-center justify-between px-6 py-4 flex-shrink-0 bg-card border-b border-border">
         <div className="flex items-center gap-4">
           <input
             type="text"
             placeholder="Filter clients…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            style={{ ...inputStyle, width: '220px' }}
+            className="h-9 w-[220px] border border-border bg-card text-text1 rounded-sm px-3 text-sm font-sans focus:outline-none focus:border-blue transition-colors"
           />
           {!isLoading && !isError && (
-            <span className="text-sm" style={{ color: 'var(--text2)' }}>
-              <span style={{ fontFamily: 'var(--font-ibm-plex-mono), monospace', fontWeight: 600, color: 'var(--text1)' }}>{clients.length}</span>
+            <span className="text-sm text-text2 font-sans">
+              <span className="font-mono font-semibold text-text1">{clients.length}</span>
               {' '}client{clients.length !== 1 ? 's' : ''}
             </span>
           )}
         </div>
         <button
           onClick={() => setAddOpen(true)}
-          className="text-sm px-4 py-2 font-medium"
-          style={{ backgroundColor: 'var(--blue)', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontFamily: 'var(--font-inter), sans-serif' }}
+          className="text-sm px-4 py-2 font-medium rounded-sm bg-blue text-white hover:bg-blue/90 transition-colors font-sans"
         >
           + Add Client
         </button>
       </div>
 
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto p-6">
         {isLoading ? (
-          <div className="p-6 flex flex-col gap-2">
-            {[1,2,3,4].map(i => <div key={i} className="h-10 rounded animate-pulse" style={{ backgroundColor: '#E0E3E3' }} />)}
+          <div className="flex flex-col gap-2">
+            {[1,2,3,4].map(i => <div key={i} className="h-10 rounded-sm bg-border animate-pulse" />)}
           </div>
         ) : isError ? (
-          <div className="p-6"><p className="text-sm" style={{ color: 'var(--red)' }}>Failed to load clients</p></div>
+          <p className="text-sm text-red font-sans">Failed to load clients</p>
         ) : filtered.length === 0 ? (
-          <div className="p-6"><p className="text-sm" style={{ color: 'var(--text3)' }}>No clients yet{filter ? ' matching that filter' : ''}.</p></div>
+          <div className="flex flex-col items-center justify-center rounded-sm h-[200px] bg-card border border-border">
+            <p className="text-sm text-text3 font-sans">No clients yet{filter ? ' matching that filter' : ''}.</p>
+          </div>
         ) : (
-          <table className="w-full text-sm" style={{ borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ backgroundColor: '#F2F3F3', borderBottom: '1px solid var(--border)' }}>
-                {['Client', 'Organisation', 'Email', 'Deals', 'Total Billed', 'Last Active'].map(h => (
-                  <th key={h} className="text-left px-4 py-2 font-medium text-xs uppercase" style={{ color: 'var(--text2)', letterSpacing: '0.04em' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(c => (
-                <tr key={c.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td className="px-4 py-3" style={{ color: 'var(--text1)' }}>
-                    <span className="font-medium">{c.name}</span>
-                    <span className="ml-1.5 text-xs" style={{ color: 'var(--text3)' }}>{c.company_name}</span>
-                  </td>
-                  <td className="px-4 py-3" style={{ color: 'var(--text2)' }}>{c.org_name || '—'}</td>
-                  <td className="px-4 py-3" style={{ color: 'var(--text2)' }}>{c.email || '—'}</td>
-                  <td className="px-4 py-3" style={{ fontFamily: 'var(--font-ibm-plex-mono), monospace', color: 'var(--text1)' }}>
-                    {String(c.deals_count)}
-                  </td>
-                  <td className="px-4 py-3" style={{ fontFamily: 'var(--font-ibm-plex-mono), monospace', color: 'var(--text1)' }}>
-                    {formatINR(c.total_billed)}
-                  </td>
-                  <td className="px-4 py-3" style={{ fontFamily: 'var(--font-ibm-plex-mono), monospace', color: 'var(--text2)', fontSize: '0.8rem' }}>
-                    {c.last_active ? fmtDate(c.last_active) : '—'}
-                  </td>
+          <div className="bg-card rounded-sm border border-border overflow-hidden">
+            <table className="w-full text-sm border-collapse font-sans text-[0.8125rem]">
+              <thead>
+                <tr className="bg-bg border-b border-border">
+                  {['Client', 'Organisation', 'Email', 'Deals', 'Total Billed', 'Last Active'].map(h => (
+                    <th key={h} className="text-left px-4 py-3 font-semibold text-xs text-text2">{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filtered.map((c, idx) => (
+                  <tr key={c.id} className={`bg-card hover:bg-bg transition-colors ${idx < filtered.length - 1 ? 'border-b border-border' : ''}`}>
+                    <td className="px-4 py-3 text-text1">
+                      <span className="font-medium">{c.name}</span>
+                      <span className="ml-1.5 text-xs text-text3">{c.company_name}</span>
+                    </td>
+                    <td className="px-4 py-3 text-text2">{c.org_name || '-'}</td>
+                    <td className="px-4 py-3 text-text2">{c.email || '-'}</td>
+                    <td className="px-4 py-3 font-mono text-text1">
+                      {String(c.deals_count)}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-text1">
+                      {formatINR(c.total_billed)}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-text2 text-[0.8rem]">
+                      {c.last_active ? fmtDate(c.last_active) : '-'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -2466,7 +2443,7 @@ function ComingSoon({ label, slice }: { label: string; slice: number }) {
   return (
     <div className="flex items-center justify-center" style={{ height: '300px' }}>
       <p className="text-sm" style={{ color: 'var(--text3)', fontFamily: 'var(--font-inter), sans-serif' }}>
-        {label} — coming in Slice {slice}
+        {label} - coming in Slice {slice}
       </p>
     </div>
   )
@@ -2485,40 +2462,26 @@ export default function SalesPage() {
   const [activeTab, setActiveTab] = useState<SalesTab>('pipeline')
 
   return (
-    <div className="flex flex-col" style={{ height: '100%' }}>
+    <div className="flex flex-col h-full bg-bg">
       {/* Page header + tab bar */}
-      <div
-        className="px-6 pt-6 flex-shrink-0"
-        style={{ backgroundColor: 'var(--bg)' }}
-      >
-        <h1
-          className="text-xl font-semibold mb-4"
-          style={{ fontFamily: 'var(--font-syne), sans-serif', color: 'var(--text1)' }}
-        >
+      <div className="px-6 pt-6 flex-shrink-0 border-b border-border bg-card">
+        <h1 className="text-xl font-semibold mb-4 font-sans text-text1">
           Sales
         </h1>
 
-        <div className="flex" style={{ borderBottom: '1px solid var(--border)' }}>
+        <div className="flex gap-6">
           {TABS.map((t) => {
             const active = activeTab === t.key
             return (
               <button
                 key={t.key}
                 onClick={() => setActiveTab(t.key)}
-                className="text-sm px-4 py-2 font-medium transition-colors"
-                style={{
-                  borderTop:       'none',
-                  borderLeft:      'none',
-                  borderRight:     'none',
-                  borderBottom:    active ? '2px solid var(--blue)' : '2px solid transparent',
-                  color:           active ? 'var(--blue)' : 'var(--text2)',
-                  backgroundColor: 'transparent',
-                  fontFamily:      'var(--font-inter), sans-serif',
-                  marginBottom:    '-1px',
-                  cursor:          'pointer',
-                }}
+                className={`text-sm pb-3 font-medium transition-colors font-sans relative ${active ? 'text-blue' : 'text-text2 hover:text-text1'}`}
               >
                 {t.label}
+                {active && (
+                  <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-blue" />
+                )}
               </button>
             )
           })}
@@ -2526,7 +2489,7 @@ export default function SalesPage() {
       </div>
 
       {/* Tab content */}
-      <div className="flex-1" style={{ minHeight: 0 }}>
+      <div className="flex-1 overflow-hidden">
         {activeTab === 'pipeline' && <PipelineTab />}
         {activeTab === 'invoices' && <InvoicesTab />}
         {activeTab === 'leads'    && <LeadsTab />}

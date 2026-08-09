@@ -8,9 +8,9 @@ import '../lib/hono-vars'
 const app = new Hono()
 
 // ── Internal trigger ──────────────────────────────────────────────────────────
-// Called by CBOP itself (deal close, etc.) — not exposed externally
+// Called by CBOP itself (deal close, etc.) - not exposed externally
 
-app.post('/api/agents/trigger/:name', requireAuth, requireRole('ceo', 'coo'), async (c) => {
+app.post('/api/agents/trigger/:name', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const name = c.req.param('name') as string
   const body = await c.req.json()
 
@@ -25,7 +25,7 @@ app.post('/api/agents/trigger/:name', requireAuth, requireRole('ceo', 'coo'), as
   )
   const jobId = String(jobResult.rows[0].id)
 
-  // Fire agent async — don't block the response
+  // Fire agent async - don't block the response
   triggerAgent({ agent: name, context: body as Record<string, unknown> })
     .then(async (result) => {
       await query(
@@ -51,8 +51,8 @@ app.post('/api/agents/trigger/:name', requireAuth, requireRole('ceo', 'coo'), as
 
 // ── cbop_control tool endpoints ───────────────────────────────────────────────
 // OpenClaw calls these when cbop_control agent needs data or actions.
-// Auth: requireAuth (OpenClaw authenticates as Bala's session or a service account).
-// Role gates match web UI — Guru cannot access finance data.
+// Auth: requireAuth (OpenClaw authenticates as a service account session).
+// Role gates match web UI - Guru cannot access finance data.
 
 app.get('/api/agents/cbop-control/tools/getOverdueInvoices', requireAuth, async (c) => {
   const companyIds = c.get('companyIds') as string[]
@@ -102,7 +102,7 @@ app.get('/api/agents/cbop-control/tools/getTodaysTasks', requireAuth, async (c) 
   return c.json(result.rows)
 })
 
-app.get('/api/agents/cbop-control/tools/getPipelineSummary', requireAuth, requireRole('ceo', 'coo'), async (c) => {
+app.get('/api/agents/cbop-control/tools/getPipelineSummary', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const companyIds = c.get('companyIds') as string[]
   const companyId = c.req.query('company_id')
   // Validate the requested company_id is within the session user's scope
@@ -123,7 +123,7 @@ app.get('/api/agents/cbop-control/tools/getPipelineSummary', requireAuth, requir
   return c.json(result.rows)
 })
 
-app.get('/api/agents/cbop-control/tools/getDealStatus', requireAuth, requireRole('ceo', 'coo'), async (c) => {
+app.get('/api/agents/cbop-control/tools/getDealStatus', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const companyIds = c.get('companyIds') as string[]
   const dealId = c.req.query('deal_id')
   if (!dealId) return c.json({ error: 'deal_id required' }, 400)
@@ -187,7 +187,7 @@ app.post('/api/agents/cbop-control/tools/markTaskDone', requireAuth, async (c) =
   return c.json({ ok: true, task: result.rows[0] })
 })
 
-app.post('/api/agents/cbop-control/tools/createLead', requireAuth, requireRole('ceo', 'coo'), async (c) => {
+app.post('/api/agents/cbop-control/tools/createLead', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const companyIds = c.get('companyIds') as string[]
   const body = await c.req.json<{
     name: string; org?: string; source?: string; owner_id?: string; company_id: string
@@ -251,7 +251,7 @@ app.get('/api/agents/cbop-control/tools/getMorningBriefing', requireAuth, async 
   })
 })
 
-app.post('/api/agents/cbop-control/tools/sendInvoiceReminder', requireAuth, requireRole('ceo', 'coo'), async (c) => {
+app.post('/api/agents/cbop-control/tools/sendInvoiceReminder', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const companyIds = c.get('companyIds') as string[]
   const body = await c.req.json<{ invoice_id: string }>()
   if (!body.invoice_id) return c.json({ error: 'invoice_id required' }, 400)

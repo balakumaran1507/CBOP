@@ -91,7 +91,8 @@ LinkedIn has two independent posting paths with very different feasibility:
 
 ### Build plan
 
-**Phase 1 - Path A end-to-end (buildable now, zero external wait)**
+**Phase 1 - Path A end-to-end (buildable now, zero external wait) - STATUS: BUILT**
+`tsc --noEmit` and `npm run build` both clean (`/social` route 8.36kB). Not yet verified against a real LinkedIn app (no `LINKEDIN_CLIENT_ID`/`SECRET` set) or restarted on the live service - see docs/HANDOFF.md.
 - `api/lib/linkedin.ts` - OAuth helpers (authorize URL, code exchange, OpenID `userinfo` fetch for person URN + name) and `createLinkedInPost()` wrapping the Posts API.
 - Migration `048_social_posts.sql`:
   - Extend `social_connections`: add `connection_type TEXT CHECK (connection_type IN ('member','organization'))` (existing `account_id`/`access_token`/`refresh_token`/`token_expires_at` columns are reused as-is).

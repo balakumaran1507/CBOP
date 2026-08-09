@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { Lock } from 'lucide-react'
 
 interface MentorMessage {
   role:    'user' | 'assistant'
@@ -31,7 +32,7 @@ export default function SharedMentorPage({ params }: { params: { token: string }
   if (error) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F2F3F3' }}>
       <div style={{ background: '#fff', border: '1px solid #D5DBDB', borderRadius: 8, padding: 40, textAlign: 'center', maxWidth: 400 }}>
-        <div style={{ fontSize: 32, marginBottom: 12 }}>🔒</div>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}><Lock size={32} /></div>
         <h2 style={{ fontFamily: 'sans-serif', fontWeight: 600, marginBottom: 8 }}>{error === 'Link expired' ? 'Link expired' : 'Not found'}</h2>
         <p style={{ color: '#687078', fontSize: 14 }}>This link has {error === 'Link expired' ? 'expired (72 hour limit)' : 'already been used or does not exist'}</p>
       </div>
@@ -51,7 +52,7 @@ export default function SharedMentorPage({ params }: { params: { token: string }
       <div style={{ maxWidth: 720, margin: '0 auto' }}>
         <div style={{ background: '#232F3E', borderRadius: '8px 8px 0 0', padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <span style={{ color: '#AAB5BB', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Mentor Council — Read Only</span>
+            <span style={{ color: '#AAB5BB', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Mentor Council - Read Only</span>
             <h1 style={{ color: '#fff', fontWeight: 600, fontSize: 16, margin: '4px 0 0', fontFamily: 'sans-serif' }}>{data.persona_label}</h1>
           </div>
           <div style={{ textAlign: 'right' }}>

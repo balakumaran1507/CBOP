@@ -4,116 +4,86 @@ import { authClient } from '@/app/lib/auth-client'
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
-  const [status, setStatus] = useState<'idle' | 'loading' | 'sent' | 'error'>('idle')
+  const [loading, setLoading] = useState(false)
+  const [msg, setMsg] = useState('')
   const [error, setError] = useState('')
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setStatus('loading')
+    setLoading(true)
     setError('')
+    setMsg('')
 
-    const { error: authError } = await authClient.signIn.magicLink({
+    const { error: resetErr } = await authClient.signIn.magicLink({
       email,
       callbackURL: '/dashboard',
     })
 
-    if (authError) {
-      setError(authError.message || 'Failed to send magic link. Check the email address.')
-      setStatus('error')
+    if (resetErr) {
+      setError(resetErr.message || 'Failed to send link')
     } else {
-      setStatus('sent')
+      setMsg('Check your email for a reset link.')
     }
+    setLoading(false)
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'var(--bg)' }}>
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold mb-1" style={{ fontFamily: 'Syne, sans-serif', color: 'var(--text1)' }}>
-            CBOP
+    <div className="min-h-screen flex items-center justify-center bg-bg font-sans p-4">
+      <div className="w-full max-w-[420px] flex flex-col">
+        
+        <div className="mb-10">
+          <h1 className="text-4xl font-bold tracking-tight text-text1 mb-2">
+            Reset Password
           </h1>
-          <p style={{ color: 'var(--text2)', fontSize: '0.875rem' }}>Your company. One OS.</p>
+          <p className="text-text2 text-[15px] font-medium tracking-wide">
+            Enter your email to receive a reset link.
+          </p>
         </div>
 
-        <div className="bg-white rounded-lg p-8" style={{ border: '1px solid var(--border)', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
-          {status === 'sent' ? (
-            <div className="text-center">
-              <h2 className="text-xl font-semibold mb-3" style={{ fontFamily: 'Syne, sans-serif' }}>Check your email</h2>
-              <p className="text-sm mb-6" style={{ color: 'var(--text2)' }}>
-                A login link was sent to <strong>{email}</strong>. Click it to sign in — it expires in 15 minutes.
-              </p>
-              <a
-                href="/login"
-                className="text-sm"
-                style={{ color: 'var(--blue)', textDecoration: 'none' }}
-              >
-                Back to sign in
-              </a>
+        <div className="w-full bg-card p-8 border border-border shadow-sm rounded-none">
+          {error && (
+            <div className="mb-6 p-4 bg-red/10 border border-red/20 text-red text-sm font-medium flex items-center rounded-none">
+              {error}
             </div>
-          ) : (
-            <>
-              <h2 className="text-xl font-semibold mb-2" style={{ fontFamily: 'Syne, sans-serif' }}>Forgot password</h2>
-              <p className="text-sm mb-6" style={{ color: 'var(--text2)' }}>
-                Enter your email and we&apos;ll send you a magic link to sign in.
-              </p>
-
-              {status === 'error' && (
-                <div className="mb-4 px-3 py-2 rounded text-sm" style={{ backgroundColor: '#FEF2F2', color: 'var(--red)', border: '1px solid #FECACA' }}>
-                  {error}
-                </div>
-              )}
-
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text1)' }}>
-                    Email
-                  </label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    autoComplete="email"
-                    className="w-full px-3 text-sm outline-none focus:ring-2"
-                    style={{
-                      height: '36px',
-                      border: '1px solid var(--border)',
-                      borderRadius: '6px',
-                      color: 'var(--text1)',
-                      backgroundColor: '#fff',
-                      boxSizing: 'border-box',
-                    }}
-                    placeholder="you@company.com"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={status === 'loading'}
-                  className="w-full text-sm font-medium text-white"
-                  style={{
-                    height: '36px',
-                    borderRadius: '6px',
-                    backgroundColor: status === 'loading' ? 'var(--text3)' : 'var(--blue)',
-                    border: 'none',
-                    cursor: status === 'loading' ? 'not-allowed' : 'pointer',
-                  }}
-                >
-                  {status === 'loading' ? 'Sending…' : 'Send magic link'}
-                </button>
-              </form>
-
-              <div className="mt-4 text-center">
-                <a
-                  href="/login"
-                  className="text-sm"
-                  style={{ color: 'var(--blue)', textDecoration: 'none' }}
-                >
-                  Back to sign in
-                </a>
-              </div>
-            </>
           )}
+          {msg && (
+            <div className="mb-6 p-4 bg-green/10 border border-green/20 text-green text-sm font-medium flex items-center rounded-none">
+              {msg}
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="space-y-2">
+              <label className="block text-sm font-bold text-text1 uppercase tracking-wider">
+                Email
+              </label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className="w-full px-4 py-3 text-[15px] text-text1 bg-bg border border-border outline-none focus:border-blue transition-colors rounded-none placeholder:text-text3 font-medium"
+                placeholder="you@company.com"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="relative w-full h-12 mt-2 flex items-center justify-center bg-text1 text-white font-bold text-[15px] transition-all hover:bg-black disabled:opacity-70 disabled:pointer-events-none rounded-none uppercase tracking-wider"
+            >
+              {loading ? 'Sending…' : 'Send Reset Link'}
+            </button>
+          </form>
+
+          <div className="mt-8 text-left">
+            <a
+              href="/login"
+              className="text-sm font-bold text-text2 hover:text-text1 transition-colors uppercase tracking-wider"
+            >
+              ← Back to Sign in
+            </a>
+          </div>
         </div>
       </div>
     </div>

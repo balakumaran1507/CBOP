@@ -1,0 +1,19 @@
+[Unit]
+Description=CBOP v2 — Internal Business Platform
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=nigga
+WorkingDirectory=/home/nigga/CBOP
+ExecStart=/usr/bin/npm start -- -p 3003
+Restart=always
+RestartSec=5
+EnvironmentFile=/home/nigga/CBOP/.env
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cbop
+
+[Install]
+WantedBy=multi-user.target

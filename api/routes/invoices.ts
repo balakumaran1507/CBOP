@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { requireAuth } from '../middleware/require-auth'
 import { requireRole } from '../middleware/require-role'
 import { query, transaction } from '../lib/db'
+import { AUDIT_ACTIONS, writeAuditLogForRequest } from '../lib/audit-log'
 import { sendViaOpenClaw } from '../lib/openclaw'
 import { buildInvoicePdf } from '../lib/pdf-generator'
 import '../lib/hono-vars'
@@ -177,6 +178,14 @@ app.get('/api/invoices/:id/pdf', requireAuth, requireRole('ceo', 'coo', 'cto'), 
     console.error('PDF generation failed:', err)
     return c.json({ error: 'PDF generation failed' }, 500)
   }
+
+  // Data export — a financial record leaving the platform is auditable.
+  await writeAuditLogForRequest(c, {
+    action:       AUDIT_ACTIONS.exportInvoicePdf,
+    resourceType: 'sales_invoices',
+    resourceId:   invoiceId,
+    after:        { invoice_no: invoiceNo, bytes: pdf.length },
+  })
 
   return new Response(pdf as unknown as BodyInit, {
     headers: {

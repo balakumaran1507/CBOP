@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { Pool, QueryResult, QueryResultRow } from 'pg'
 
 // Create PostgreSQL connection pool
@@ -16,6 +17,35 @@ pool.on('connect', () => {
 pool.on('error', (err) => {
   console.error('Unexpected database error:', err)
 })
+
+// ── Actor context (audit trail) ───────────────────────────────────────────────
+// requireAuth establishes this once per request and every downstream call runs
+// inside it. Two consumers:
+//   1. api/lib/audit-log.ts — fills actor_id / actor_role when a caller does not
+//      pass them explicitly.
+//   2. transaction() below — publishes the actor to Postgres as the
+//      transaction-local GUCs cbop.current_user_id / cbop.current_role, which is
+//      what the cbop_write_audit_log() row trigger (migration 059) reads.
+// Never set these per handler — the whole point is that it happens once, in
+// shared middleware.
+
+export interface ActorContext {
+  userId: string | null
+  role: string | null
+  companyIds: string[]
+}
+
+const actorStore = new AsyncLocalStorage<ActorContext>()
+
+/** Run fn with the given actor attached to the async context. */
+export function runWithActorContext<T>(actor: ActorContext, fn: () => Promise<T>): Promise<T> {
+  return actorStore.run(actor, fn)
+}
+
+/** The actor for the current request, or undefined outside a request (cron, n8n, MCP). */
+export function getActorContext(): ActorContext | undefined {
+  return actorStore.getStore()
+}
 
 /**
  * Execute a query against the database
@@ -50,6 +80,19 @@ export async function transaction<T>(
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
+
+    // Publish the request actor to Postgres for the duration of this
+    // transaction (third arg = is_local, so it is discarded at COMMIT/ROLLBACK
+    // and can never leak to the next request that borrows this pooled client).
+    const actor = actorStore.getStore()
+    if (actor?.userId) {
+      await client.query(
+        `SELECT set_config('cbop.current_user_id', $1, true),
+                set_config('cbop.current_role',    $2, true)`,
+        [actor.userId, actor.role ?? '']
+      )
+    }
+
     const result = await callback(client)
     await client.query('COMMIT')
     return result

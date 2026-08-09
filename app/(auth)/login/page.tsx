@@ -1,10 +1,36 @@
 'use client'
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { authClient } from '@/app/lib/auth-client'
 
+const ALLOWED_REDIRECT_ORIGINS = [
+  'https://cbop.etherence.com',
+  'https://accounting.etherence.com',
+]
+
+function resolveRedirect(raw: string | null): string {
+  if (!raw) return '/dashboard'
+  if (raw.startsWith('/') && !raw.startsWith('//')) return raw
+  try {
+    const url = new URL(raw)
+    if (ALLOWED_REDIRECT_ORIGINS.includes(url.origin)) return url.toString()
+  } catch {
+  }
+  return '/dashboard'
+}
+
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
+  )
+}
+
+function LoginForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const redirectTarget = resolveRedirect(searchParams.get('redirect'))
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -18,39 +44,45 @@ export default function LoginPage() {
     const { error: authError } = await authClient.signIn.email({
       email,
       password,
-      callbackURL: '/dashboard',
+      callbackURL: redirectTarget,
     })
 
     if (authError) {
       setError(authError.message || 'Invalid email or password')
       setLoading(false)
+    } else if (redirectTarget.startsWith('http')) {
+      window.location.href = redirectTarget
     } else {
-      router.push('/dashboard')
+      router.push(redirectTarget)
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'var(--bg)' }}>
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold mb-1" style={{ fontFamily: 'Syne, sans-serif', color: 'var(--text1)' }}>
-            CBOP
+    <div className="min-h-screen flex items-center justify-center bg-bg font-sans p-4">
+      <div className="w-full max-w-[420px] flex flex-col">
+        
+        <div className="mb-10">
+          <h1 className="text-4xl font-bold tracking-tight text-text1 mb-2">
+            Sign in to CBOP
           </h1>
-          <p style={{ color: 'var(--text2)', fontSize: '0.875rem' }}>Your company. One OS.</p>
+          <p className="text-text2 text-[15px] font-medium tracking-wide">
+            Your company. One OS.
+          </p>
         </div>
 
-        <div className="bg-white rounded-lg p-8" style={{ border: '1px solid var(--border)', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
-          <h2 className="text-xl font-semibold mb-6" style={{ fontFamily: 'Syne, sans-serif' }}>Sign in</h2>
-
+        <div className="w-full bg-card p-8 border border-border shadow-sm rounded-none relative">
           {error && (
-            <div className="mb-4 px-3 py-2 rounded text-sm" style={{ backgroundColor: '#FEF2F2', color: 'var(--red)', border: '1px solid #FECACA' }}>
+            <div className="mb-6 p-4 bg-red/10 border border-red/20 text-red text-sm font-medium flex items-center rounded-none">
+              <svg className="w-5 h-5 mr-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
               {error}
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text1)' }}>
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="space-y-2">
+              <label className="block text-sm font-bold text-text1 uppercase tracking-wider">
                 Email
               </label>
               <input
@@ -59,21 +91,13 @@ export default function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 autoComplete="email"
-                className="w-full px-3 text-sm outline-none focus:ring-2"
-                style={{
-                  height: '36px',
-                  border: '1px solid var(--border)',
-                  borderRadius: '6px',
-                  color: 'var(--text1)',
-                  backgroundColor: '#fff',
-                  boxSizing: 'border-box',
-                }}
+                className="w-full px-4 py-3 text-[15px] text-text1 bg-bg border border-border outline-none focus:border-blue transition-colors rounded-none placeholder:text-text3 font-medium"
                 placeholder="you@company.com"
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text1)' }}>
+            <div className="space-y-2">
+              <label className="block text-sm font-bold text-text1 uppercase tracking-wider">
                 Password
               </label>
               <input
@@ -82,15 +106,7 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete="current-password"
-                className="w-full px-3 text-sm outline-none focus:ring-2"
-                style={{
-                  height: '36px',
-                  border: '1px solid var(--border)',
-                  borderRadius: '6px',
-                  color: 'var(--text1)',
-                  backgroundColor: '#fff',
-                  boxSizing: 'border-box',
-                }}
+                className="w-full px-4 py-3 text-[15px] text-text1 bg-bg border border-border outline-none focus:border-blue transition-colors rounded-none placeholder:text-text3 font-medium"
                 placeholder="••••••••"
               />
             </div>
@@ -98,24 +114,27 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full text-sm font-medium text-white"
-              style={{
-                height: '36px',
-                borderRadius: '6px',
-                backgroundColor: loading ? 'var(--text3)' : 'var(--blue)',
-                border: 'none',
-                cursor: loading ? 'not-allowed' : 'pointer',
-              }}
+              className="relative w-full h-12 mt-2 flex items-center justify-center bg-text1 text-white font-bold text-[15px] transition-all hover:bg-black disabled:opacity-70 disabled:pointer-events-none rounded-none uppercase tracking-wider"
             >
-              {loading ? 'Signing in…' : 'Sign in'}
+              <span className={`transition-opacity duration-200 ${loading ? 'opacity-0' : 'opacity-100'}`}>
+                Sign In
+              </span>
+              
+              {loading && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                </div>
+              )}
             </button>
           </form>
 
-          <div className="mt-4 text-center">
+          <div className="mt-8 text-left">
             <a
               href="/forgot-password"
-              className="text-sm"
-              style={{ color: 'var(--blue)', textDecoration: 'none' }}
+              className="text-sm font-bold text-text2 hover:text-text1 transition-colors uppercase tracking-wider"
             >
               Forgot password?
             </a>

@@ -19,7 +19,7 @@ app.get('/api/sessions', requireAuth, async (c) => {
      FROM ops_work_sessions s
      LEFT JOIN ops_projects p ON p.id = s.project_id
      LEFT JOIN companies co   ON co.id = s.company_id
-     WHERE s.company_id = ANY($1)
+     WHERE (s.company_id = ANY($1) OR p.work_type = 'internal')
      ORDER BY s.scheduled_at DESC NULLS LAST, s.id DESC`,
     [companyIds]
   )
@@ -38,7 +38,7 @@ app.post('/api/sessions', requireAuth, async (c) => {
   if (!project_id)     return c.json({ error: 'project_id is required' }, 400)
 
   const projectResult = await query(
-    `SELECT id, company_id FROM ops_projects WHERE id = $1 AND company_id = ANY($2)`,
+    `SELECT id, company_id FROM ops_projects WHERE id = $1 AND (company_id = ANY($2) OR work_type = 'internal')`,
     [project_id, companyIds]
   )
   if (projectResult.rows.length === 0) return c.json({ error: 'Project not found or not in scope' }, 404)
@@ -75,14 +75,17 @@ app.patch('/api/sessions/:id', requireAuth, async (c) => {
   }
 
   const result = await query(
-    `UPDATE ops_work_sessions
+    `UPDATE ops_work_sessions s
      SET goal         = COALESCE($1, goal),
          output       = COALESCE($2, output),
          attendees    = COALESCE($3, attendees),
          scheduled_at = COALESCE($4, scheduled_at),
          completed_at = COALESCE($5, completed_at)
-     WHERE id = $6 AND company_id = ANY($7)
-     RETURNING id, goal, output, attendees, scheduled_at, completed_at`,
+     WHERE s.id = $6
+       AND (s.company_id = ANY($7) OR EXISTS (
+         SELECT 1 FROM ops_projects p WHERE p.id = s.project_id AND p.work_type = 'internal'
+       ))
+     RETURNING s.id, s.goal, s.output, s.attendees, s.scheduled_at, s.completed_at`,
     [
       goal?.trim() || null,
       output?.trim() || null,

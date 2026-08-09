@@ -1,0 +1,225 @@
+{
+  "name": "interview_reminder",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "interview-reminder",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "id": "ir-node-01",
+      "name": "Interview Scheduled Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "interview-reminder"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT a.id, a.name, a.email, a.interview_at, a.interview_meet_link, a.interview_panel, r.title AS role_title, co.name AS company_name FROM hiring_applicants a LEFT JOIN hiring_roles r ON r.id = a.role_id LEFT JOIN companies co ON co.id = a.company_id WHERE a.id = '{{ $json.body.applicant_id }}'",
+        "options": {}
+      },
+      "id": "ir-node-02",
+      "name": "Fetch Interview Details",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 300],
+      "credentials": {
+        "postgres": {
+          "id": "CBOP_PG_CRED_ID",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "amount": "={{ Math.max(0, (new Date($json.interview_at).getTime() - Date.now() - 30*60*1000)) }}",
+        "unit": "milliseconds"
+      },
+      "id": "ir-node-03",
+      "name": "Wait Until 30min Before",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [720, 120]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CBOP_URL }}/api/internal/send-email",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-n8n-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "to",      "value": "={{ $('Fetch Interview Details').item.json.email }}" },
+            { "name": "subject", "value": "Reminder: Interview in 30 minutes — {{ $('Fetch Interview Details').item.json.company_name }}" },
+            { "name": "text",    "value": "Hi {{ $('Fetch Interview Details').item.json.name }},\n\nYour interview with {{ $('Fetch Interview Details').item.json.company_name }} begins in 30 minutes.\n\nMeeting Link: {{ $('Fetch Interview Details').item.json.interview_meet_link }}\n\nBest of luck!" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ir-node-04",
+      "name": "Email 30min Reminder to Applicant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const webhookData = $('Interview Scheduled Webhook').item.json.body;\nconst interviewDetails = $('Fetch Interview Details').item.json;\nconst panelTelegramIds = webhookData.panel_telegram_ids || [];\nconst panelNames = webhookData.panel_names || 'Panel';\nif (panelTelegramIds.length === 0) return [];\nconst msg = `[INTERVIEW] 30min reminder: ${interviewDetails.name} — ${interviewDetails.role_title} at ${interviewDetails.company_name}\\nPanel: ${panelNames}\\nMeet: ${interviewDetails.interview_meet_link || '(no link)'}`;\nreturn panelTelegramIds.map(telegramId => ({ json: { telegram_id: telegramId, message: msg } }));"
+      },
+      "id": "ir-node-05",
+      "name": "Build Panel Telegram Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.HERMES_URL }}/send",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.HERMES_API_KEY }}" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "channel", "value": "telegram" },
+            { "name": "to",      "value": "={{ $json.telegram_id }}" },
+            { "name": "message", "value": "={{ $json.message }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ir-node-06",
+      "name": "Telegram 30min to Panel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 240]
+    },
+
+    {
+      "parameters": {
+        "amount": "={{ Math.max(0, (new Date($json.interview_at).getTime() - Date.now() - 10*60*1000)) }}",
+        "unit": "milliseconds"
+      },
+      "id": "ir-node-07",
+      "name": "Wait Until 10min Before",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [720, 420]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CBOP_URL }}/api/internal/send-email",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-n8n-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "to",      "value": "={{ $('Fetch Interview Details').item.json.email }}" },
+            { "name": "subject", "value": "Your interview starts in 10 minutes — {{ $('Fetch Interview Details').item.json.company_name }}" },
+            { "name": "html",    "value": "<p>Hi {{ $('Fetch Interview Details').item.json.name }},</p><p>Your interview with <strong>{{ $('Fetch Interview Details').item.json.company_name }}</strong> starts in <strong>10 minutes</strong>.</p><p><a href='{{ $('Fetch Interview Details').item.json.interview_meet_link }}' style='background:#0073BB;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:bold;display:inline-block'>Join Meeting Now</a></p><p>Or copy the link:<br>{{ $('Fetch Interview Details').item.json.interview_meet_link }}</p><p>Good luck!</p>" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ir-node-08",
+      "name": "Email 10min Reminder to Applicant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 420]
+    },
+
+    {
+      "parameters": {
+        "amount": "={{ Math.max(0, (new Date($json.interview_at).getTime() - Date.now())) }}",
+        "unit": "milliseconds"
+      },
+      "id": "ir-node-09",
+      "name": "Wait Until Interview Time",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [720, 660]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CBOP_URL }}/api/internal/send-email",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-n8n-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "to",      "value": "={{ $('Fetch Interview Details').item.json.email }}" },
+            { "name": "subject", "value": "Your interview is starting now — {{ $('Fetch Interview Details').item.json.company_name }}" },
+            { "name": "html",    "value": "<p>Hi {{ $('Fetch Interview Details').item.json.name }},</p><p>Your interview with <strong>{{ $('Fetch Interview Details').item.json.company_name }}</strong> for the <strong>{{ $('Fetch Interview Details').item.json.role_title }}</strong> position is <strong>starting right now</strong>.</p><p><a href='{{ $('Fetch Interview Details').item.json.interview_meet_link }}' style='background:#1D8102;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:16px;display:inline-block'>Join Interview Now →</a></p><p style='color:#666;font-size:13px'>Or paste this link in your browser:<br>{{ $('Fetch Interview Details').item.json.interview_meet_link }}</p>" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ir-node-10",
+      "name": "Email Interview Starting Now",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 660]
+    }
+  ],
+  "connections": {
+    "Interview Scheduled Webhook": {
+      "main": [[{ "node": "Fetch Interview Details", "type": "main", "index": 0 }]]
+    },
+    "Fetch Interview Details": {
+      "main": [[
+        { "node": "Wait Until 30min Before",   "type": "main", "index": 0 },
+        { "node": "Wait Until 10min Before",   "type": "main", "index": 0 },
+        { "node": "Wait Until Interview Time", "type": "main", "index": 0 }
+      ]]
+    },
+    "Wait Until 30min Before": {
+      "main": [
+        [{ "node": "Email 30min Reminder to Applicant", "type": "main", "index": 0 }],
+        [{ "node": "Build Panel Telegram Items",        "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Panel Telegram Items": {
+      "main": [[{ "node": "Telegram 30min to Panel", "type": "main", "index": 0 }]]
+    },
+    "Wait Until 10min Before": {
+      "main": [[{ "node": "Email 10min Reminder to Applicant", "type": "main", "index": 0 }]]
+    },
+    "Wait Until Interview Time": {
+      "main": [[{ "node": "Email Interview Starting Now", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "errorWorkflow": "error_handler"
+  }
+}

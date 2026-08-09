@@ -1,0 +1,21 @@
+
+> cbop-v2@2.0.0 start
+> next start -p 3003
+
+  ▲ Next.js 14.2.35
+  - Local:        http://localhost:3003
+
+ ✓ Starting...
+ ✓ Ready in 288ms
+<-- GET /api/health
+--> GET /api/health [32m200[0m 2ms
+✓ Connected to PostgreSQL database
+Executed query {
+  text: 'SELECT id FROM marketing_campaigns WHERE status = ',
+  duration: 36,
+  rows: 0
+}
+<-- GET /api/invoices/d12ffb25-057e-4681-aa7f-b24135626122/pdf
+--> GET /api/invoices/d12ffb25-057e-4681-aa7f-b24135626122/pdf [33m401[0m 4ms
+<-- POST /api/internal/hiring/pull-gmail
+--> POST /api/internal/hiring/pull-gmail [33m403[0m 1ms

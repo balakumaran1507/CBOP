@@ -1,0 +1,303 @@
+{
+  "id": "4t8IBBemL8Waq5Ki",
+  "name": "intern_email_check",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "iec-node-01",
+      "name": "Every 30 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://192.168.88.6:3003/api/internal/hiring-emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "options": { "timeout": 60000 }
+      },
+      "id": "iec-node-02",
+      "name": "Fetch Hiring Emails",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.count }}",
+              "rightValue": 0,
+              "operator": { "type": "number", "operation": "gt" }
+            }
+          ]
+        }
+      },
+      "id": "iec-node-hasemails",
+      "name": "Has New Emails?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "emails",
+        "options": {}
+      },
+      "id": "iec-node-split",
+      "name": "Split Email Items",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [960, 180]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "iec-node-03",
+      "name": "Process Each Email",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1200, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://192.168.88.6:3003/api/hiring/applicants/ingest",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: ($json.from || '').replace(/<[^>]+>/g, '').trim() || 'Unknown', email: ($json.from || '').match(/[\\w.+\\-]+@[\\w\\-]+\\.[\\w.]+/)?.[0] || '', resume_text: $json.text || '', source: 'email', company_id: $json.company_id || null }) }}",
+        "options": {}
+      },
+      "id": "iec-node-04",
+      "name": "Ingest to CBOP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 180],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.applicant_id }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "isNotEmpty" }
+            }
+          ]
+        }
+      },
+      "id": "iec-node-check",
+      "name": "Ingest Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1680, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://192.168.88.6:3003/api/internal/mark-email-read",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ uid: $('Process Each Email').item.json.uid, inbox: $('Process Each Email').item.json.inbox }) }}",
+        "options": {}
+      },
+      "id": "iec-node-markread",
+      "name": "Mark Email Read",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1920, 60]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Ingest to CBOP').item.json.created }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "id": "iec-node-new",
+      "name": "Is New Applicant?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2160, 60]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://192.168.88.6:18790/send",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer e56ccc6f20041f83804af50cdadd1fb6c12949bd642dfe02"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: 'telegram', to: '6316112708', message: 'HIRING — New Application\\n\\nName: ' + (($('Process Each Email').item.json.from || '').replace(/<[^>]+>/g, '').trim() || 'Unknown') + '\\nEmail: ' + (($('Process Each Email').item.json.from || '').match(/[\\w.+\\-]+@[\\w\\-]+\\.[\\w.]+/)?.[0] || 'unknown') + '\\nSubject: ' + ($('Process Each Email').item.json.subject || '(no subject)') + '\\n\\nAI scoring running — you will get a second alert with the score.\\nhttps://cbop.etherence.com/hiring' }) }}",
+        "options": {}
+      },
+      "id": "iec-node-07",
+      "name": "Notify Bala",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2400, -60]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://192.168.88.6:18790/send",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer e56ccc6f20041f83804af50cdadd1fb6c12949bd642dfe02"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: 'telegram', to: '6316112708', message: 'HIRING — Ingest FAILED — Manual Action Needed\\n\\nFrom: ' + ($('Process Each Email').item.json.from || 'unknown') + '\\nSubject: ' + ($('Process Each Email').item.json.subject || '(no subject)') + '\\n\\nEmail could NOT be ingested into CBOP. Process this application manually.\\nCheck CBOP server logs.\\nhttps://cbop.etherence.com/hiring' }) }}",
+        "options": {}
+      },
+      "id": "iec-node-alert",
+      "name": "Alert Manual Action",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1920, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_jobs (name, type, status, completed_at, payload) VALUES ('intern_email_check', 'hiring', 'completed', NOW(), '{\"checked\": true}'::jsonb)",
+        "options": {}
+      },
+      "id": "iec-node-09",
+      "name": "Log Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2400, 120],
+      "credentials": {
+        "postgres": {
+          "id": "gcE5lGClfJDol3YG",
+          "name": "CBOP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_jobs (name, type, status, completed_at, payload, error_message) VALUES ('intern_email_check', 'hiring', 'failed', NOW(), '{\"checked\": true}'::jsonb, 'Ingest failed — manual review required')",
+        "options": {}
+      },
+      "id": "iec-node-logerr",
+      "name": "Log Error",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2160, 300],
+      "credentials": {
+        "postgres": {
+          "id": "gcE5lGClfJDol3YG",
+          "name": "CBOP Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 30 Minutes": {
+      "main": [[{ "node": "Fetch Hiring Emails", "type": "main", "index": 0 }]]
+    },
+    "Fetch Hiring Emails": {
+      "main": [[{ "node": "Has New Emails?", "type": "main", "index": 0 }]]
+    },
+    "Has New Emails?": {
+      "main": [
+        [{ "node": "Split Email Items", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Split Email Items": {
+      "main": [[{ "node": "Process Each Email", "type": "main", "index": 0 }]]
+    },
+    "Process Each Email": {
+      "main": [[{ "node": "Ingest to CBOP", "type": "main", "index": 0 }]]
+    },
+    "Ingest to CBOP": {
+      "main": [[{ "node": "Ingest Succeeded?", "type": "main", "index": 0 }]]
+    },
+    "Ingest Succeeded?": {
+      "main": [
+        [{ "node": "Mark Email Read", "type": "main", "index": 0 }],
+        [{ "node": "Alert Manual Action", "type": "main", "index": 0 }]
+      ]
+    },
+    "Mark Email Read": {
+      "main": [[{ "node": "Is New Applicant?", "type": "main", "index": 0 }]]
+    },
+    "Is New Applicant?": {
+      "main": [
+        [{ "node": "Notify Bala", "type": "main", "index": 0 }],
+        [{ "node": "Log Job", "type": "main", "index": 0 }]
+      ]
+    },
+    "Notify Bala": {
+      "main": [[{ "node": "Log Job", "type": "main", "index": 0 }]]
+    },
+    "Alert Manual Action": {
+      "main": [[{ "node": "Log Error", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "errorWorkflow": "error_handler"
+  }
+}

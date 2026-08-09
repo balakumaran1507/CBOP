@@ -14,7 +14,7 @@ app.get('/api/dashboard', requireAuth, async (c) => {
     return c.json({ role, statCards: {}, alerts: [], myTasks: [], todaysPriorities: [], activityFeed: [], invoiceAlerts: [] })
   }
 
-  // All date comparisons use Postgres CURRENT_DATE / NOW() — avoids Node UTC vs IST mismatch
+  // All date comparisons use Postgres CURRENT_DATE / NOW() - avoids Node UTC vs IST mismatch
 
   const [
     revenueRes,
@@ -134,7 +134,7 @@ app.get('/api/dashboard', requireAuth, async (c) => {
     tasksDueToday: tasksDueTodayRes.rows[0].count as number,
   }
 
-  if (role === 'ceo') {
+  if (role === 'ceo' || role === 'creator') {
     statCards.revenueThisMonth = parseFloat(revenueRes.rows[0].revenue as string)
     statCards.openDeals = openDealsRes.rows[0].count as number
     statCards.cashPosition = null
@@ -159,7 +159,7 @@ app.get('/api/dashboard', requireAuth, async (c) => {
   })
 })
 
-// Minimal mark-done stub — full task CRUD will live in api/routes/tasks.ts (Slice 6)
+// Minimal mark-done stub - full task CRUD will live in api/routes/tasks.ts (Slice 6)
 app.patch('/api/tasks/:id/done', requireAuth, async (c) => {
   const taskId = c.req.param('id')
   const companyIds = c.get('companyIds') as string[]

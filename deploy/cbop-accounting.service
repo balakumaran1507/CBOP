@@ -1,0 +1,19 @@
+[Unit]
+Description=CBOP Accounting — Statutory-grade double-entry SaaS app
+After=network.target cbop.service
+Wants=cbop.service
+
+[Service]
+Type=simple
+User=nigga
+WorkingDirectory=/home/nigga/CBOP/accounting-app
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+EnvironmentFile=/home/nigga/CBOP/accounting-app/.env
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cbop-accounting
+
+[Install]
+WantedBy=multi-user.target

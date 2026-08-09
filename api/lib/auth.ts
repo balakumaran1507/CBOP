@@ -1,21 +1,84 @@
 import { betterAuth } from 'better-auth'
 import { magicLink } from 'better-auth/plugins'
-import { pool } from './db'
+import { Pool } from 'pg'
 import { sendEmail } from './mailer'
 
+if (!process.env.DATABASE_URL) {
+  throw new Error('DATABASE_URL is required — refusing to start with no database configured')
+}
+if (!process.env.BETTER_AUTH_SECRET) {
+  throw new Error('BETTER_AUTH_SECRET is required — refusing to start and sign sessions with no configured secret')
+}
+
+// better-auth needs a Pool with explicit params - Kysely's postgres driver can't parse connectionString
+const dbUrl = new URL(process.env.DATABASE_URL)
+const authPool = new Pool({
+  host:     dbUrl.hostname,
+  port:     parseInt(dbUrl.port || '5432'),
+  user:     dbUrl.username,
+  password: decodeURIComponent(dbUrl.password),
+  database: dbUrl.pathname.slice(1),
+})
+
 export const auth = betterAuth({
-  database: pool,
+  database: authPool,
   emailAndPassword: { enabled: true },
   session: {
-    cookieName: 'cbop_session',
     expiresIn: 60 * 60 * 24 * 7,
   },
-  secret: process.env.BETTER_AUTH_SECRET || 'dev-secret-change-in-prod',
+  advanced: {
+    // ⚠️  DO NOT touch cookiePrefix or cookies.session_token.name.
+    // In better-auth v1.6.25, the live session-token cookie is named
+    // `better-auth.session_token` (or `__Secure-better-auth.session_token`
+    // on HTTPS). Changing that name — even to something "cleaner" like
+    // `cbop_session` — silently invalidates every browser session the moment
+    // the server restarts, producing a wall of 401s. The original
+    // `session.cookieName` option was a no-op in this version; don't add it
+    // back. Leave this block as `{}` and let better-auth use its defaults.
+    cookies: {},
+    // CBOP Accounting (docs/modules/ACCOUNTING_Build_Plan.md) lives at
+    // accounting.etherence.com and needs to read the same session cookie
+    // set here at cbop.etherence.com. Both are single-level subdomains of
+    // etherence.com (siblings, not nested) - renamed 2026-08-07 from
+    // accounting.cbop.etherence.com because Cloudflare's free Universal SSL
+    // only covers the apex + one wildcard level (*.etherence.com), not a
+    // second level (*.cbop.etherence.com), so that hostname had no valid edge
+    // cert. Because the two apps are now siblings rather than parent/child,
+    // the cookie domain must be the shared ancestor .etherence.com, not
+    // .cbop.etherence.com - this is a deliberately wider scope than originally
+    // designed (the session cookie now also reaches any other subdomain under
+    // etherence.com, e.g. unrelated projects on the same homeserver/tunnel
+    // account). Accepted knowingly in exchange for a working cert on the free
+    // plan; revisit if Advanced Certificate Manager is ever purchased instead.
+    //
+    // Gated behind an env var, off by default: unset, this is a no-op and
+    // better-auth scopes the cookie to whatever host baseURL resolves to,
+    // exactly as it does today. Only set BETTER_AUTH_COOKIE_DOMAIN once the
+    // accounting subdomain is actually live in a given environment - setting
+    // it prematurely (e.g. in local dev against localhost) breaks login,
+    // since a `.etherence.com` cookie is never sent to `localhost`.
+    ...(process.env.BETTER_AUTH_COOKIE_DOMAIN
+      ? {
+          crossSubDomainCookies: {
+            enabled: true,
+            domain: process.env.BETTER_AUTH_COOKIE_DOMAIN,
+          },
+        }
+      : {}),
+  },
+  secret: process.env.BETTER_AUTH_SECRET,
   baseURL: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3003',
   trustedOrigins: [
     'http://localhost:3003',
     'http://127.0.0.1:3003',
-    ...(process.env.NEXT_PUBLIC_APP_URL ? [process.env.NEXT_PUBLIC_APP_URL] : []),
+    'http://cbop.etherence.com',
+    'https://cbop.etherence.com',
+    // CBOP Accounting subdomain (Slice 3, docs/modules/ACCOUNTING_Build_Plan.md) -
+    // hardcoded alongside the main domain above rather than left to
+    // BETTER_AUTH_TRUSTED_ORIGINS, since it's a fixed part of this deployment,
+    // not an admin-configurable integration endpoint. Renamed 2026-08-07, see
+    // the crossSubDomainCookies comment above for why.
+    'https://accounting.etherence.com',
     ...(process.env.BETTER_AUTH_TRUSTED_ORIGINS
       ? process.env.BETTER_AUTH_TRUSTED_ORIGINS.split(',').map(s => s.trim())
       : []),

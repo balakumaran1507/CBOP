@@ -1,9 +1,9 @@
 name: social-media-manager-linkedin
 description: >
   Publishing (not monitoring) build plan for LinkedIn, split by API access
-  path. Companion to docs/SOCIAL_Build_Plan.md - full R&D reasoning lives
+  path. Companion to docs/modules/SOCIAL_Build_Plan.md - full R&D reasoning lives
   there, this file is the machine-readable task breakdown.
-status: planned
+status: phase-1-built
 
 paths:
   path_a:
@@ -29,6 +29,8 @@ phases:
   - id: 1
     name: Path A end-to-end
     goal: working personal-profile publish loop, buildable now with zero external wait
+    status: built
+    verified: "tsc --noEmit clean, npm run build clean (/social 8.36kB) - not yet tested against a real LinkedIn app or on the live service"
     blocked_by: null
     migrations:
       - file: migrations/048_social_posts.sql

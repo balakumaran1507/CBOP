@@ -1,12 +1,10 @@
 import type { Metadata } from 'next'
-import { Inter, IBM_Plex_Mono, Syne } from 'next/font/google'
+import { Space_Grotesk } from 'next/font/google'
 import { Providers } from './providers'
 import { ServiceWorkerRegistration } from './components/ServiceWorkerRegistration'
 import './globals.css'
 
-const inter = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'swap' })
-const ibmPlexMono = IBM_Plex_Mono({ weight: ['400', '500', '600'], subsets: ['latin'], variable: '--font-ibm-plex-mono', display: 'swap' })
-const syne = Syne({ subsets: ['latin'], variable: '--font-syne', display: 'swap' })
+const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], variable: '--font-space-grotesk', display: 'swap' })
 
 export const metadata: Metadata = {
   title: 'CBOP — Your company. One OS.',
@@ -24,7 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="apple-mobile-web-app-title" content="CBOP" />
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
       </head>
-      <body className={`${inter.variable} ${ibmPlexMono.variable} ${syne.variable} font-inter`}>
+      <body className={`${spaceGrotesk.variable} font-sans bg-bg text-text1`}>
         <ServiceWorkerRegistration />
         <Providers>{children}</Providers>
       </body>

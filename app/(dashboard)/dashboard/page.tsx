@@ -94,9 +94,9 @@ const JOB_STATUS_STYLE: Record<string, { bg: string; color: string; label: strin
 
 function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="bg-white rounded" style={{ border: '1px solid var(--border)', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
-      <div className="px-5 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
-        <h2 className="text-sm font-semibold" style={{ color: 'var(--text1)', fontFamily: 'var(--font-syne), sans-serif' }}>
+    <div className="bg-card border border-border shadow-sm rounded-none">
+      <div className="px-5 py-3 border-b border-border">
+        <h2 className="text-[13px] font-bold text-text1 uppercase tracking-wider font-sans">
           {title}
         </h2>
       </div>
@@ -107,7 +107,7 @@ function SectionCard({ title, children }: { title: string; children: React.React
 
 function EmptyState({ text }: { text: string }) {
   return (
-    <p className="text-sm py-2" style={{ color: 'var(--text3)', fontFamily: 'var(--font-inter), sans-serif' }}>
+    <p className="text-sm py-2 text-text3 font-medium">
       {text}
     </p>
   )
@@ -116,29 +116,28 @@ function EmptyState({ text }: { text: string }) {
 function TaskRow({ task, onMarkDone, loading }: { task: Task; onMarkDone: (id: string) => void; loading: boolean }) {
   const today = new Date(); today.setHours(0, 0, 0, 0)
   const overdue = localDate(task.due_date) < today
+  
+  let dotColor = 'bg-[#AAB5BB]'
+  if (task.priority === 'critical') dotColor = 'bg-[#D13212]'
+  else if (task.priority === 'high') dotColor = 'bg-[#E8820C]'
+  else if (task.priority === 'medium') dotColor = 'bg-[#0073BB]'
+  
   return (
-    <div className="flex items-center gap-3 py-2.5" style={{ borderBottom: '1px solid var(--border)' }}>
-      <span
-        className="w-2 h-2 rounded-full flex-shrink-0"
-        style={{ backgroundColor: PRIORITY_DOT[task.priority] || '#AAB5BB' }}
-      />
+    <div className="flex items-center gap-3 py-2.5 border-b border-border last:border-0">
+      <span className={`w-2 h-2 rounded-none flex-shrink-0 ${dotColor}`} />
       <div className="flex-1 min-w-0">
-        <p className="text-sm truncate" style={{ color: 'var(--text1)' }}>{task.title}</p>
+        <p className="text-[14px] font-medium text-text1 truncate">{task.title}</p>
         {task.project_name && (
-          <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--text3)' }}>{task.project_name}</p>
+          <p className="text-[12px] font-bold text-text3 uppercase tracking-wider mt-0.5 truncate">{task.project_name}</p>
         )}
       </div>
-      <span
-        className="text-xs flex-shrink-0"
-        style={{ fontFamily: 'var(--font-ibm-plex-mono), monospace', color: overdue ? 'var(--red)' : 'var(--text2)' }}
-      >
+      <span className={`text-[13px] flex-shrink-0 font-mono font-bold ${overdue ? 'text-red' : 'text-text2'}`}>
         {formatDate(task.due_date)}
       </span>
       <button
         onClick={() => onMarkDone(task.id)}
         disabled={loading}
-        className="flex-shrink-0 text-xs px-2 py-1 rounded hover:opacity-80 transition-opacity disabled:opacity-40"
-        style={{ backgroundColor: '#E6F4EA', color: 'var(--green)', fontFamily: 'var(--font-inter), sans-serif' }}
+        className="flex-shrink-0 text-[11px] font-bold uppercase tracking-wider px-2 py-1 bg-green/10 text-green rounded-none hover:bg-green hover:text-white transition-colors disabled:opacity-40"
       >
         Done
       </button>
@@ -149,19 +148,19 @@ function TaskRow({ task, onMarkDone, loading }: { task: Task; onMarkDone: (id: s
 function JobRow({ job }: { job: Job }) {
   const s = JOB_STATUS_STYLE[job.status] || JOB_STATUS_STYLE.pending
   return (
-    <div className="flex items-center gap-3 py-2.5" style={{ borderBottom: '1px solid var(--border)' }}>
+    <div className="flex items-center gap-3 py-2.5 border-b border-border last:border-0">
       <span
-        className="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0"
-        style={{ backgroundColor: s.bg, color: s.color, fontFamily: 'var(--font-inter), sans-serif' }}
+        className="text-[11px] px-2 py-0.5 font-bold uppercase tracking-wider rounded-none flex-shrink-0"
+        style={{ backgroundColor: s.bg, color: s.color }}
       >
         {s.label}
       </span>
       <div className="flex-1 min-w-0">
-        <p className="text-sm truncate" style={{ color: 'var(--text1)' }}>{job.name}</p>
-        <p className="text-xs mt-0.5" style={{ color: 'var(--text3)' }}>{job.type}</p>
+        <p className="text-[14px] font-medium text-text1 truncate">{job.name}</p>
+        <p className="text-[12px] font-bold text-text3 uppercase tracking-wider mt-0.5">{job.type}</p>
       </div>
       {job.completed_at && (
-        <span className="text-xs flex-shrink-0" style={{ color: 'var(--text3)', fontFamily: 'var(--font-ibm-plex-mono), monospace' }}>
+        <span className="text-[13px] flex-shrink-0 text-text3 font-mono font-bold">
           {formatDate(job.completed_at)}
         </span>
       )}
@@ -191,23 +190,22 @@ function MorningBriefingCard() {
 
   return (
     <SectionCard title="Morning Briefing">
-      <p className="text-sm" style={{ color: 'var(--text2)' }}>
-        Daily briefing via <span style={{ fontFamily: 'var(--font-ibm-plex-mono), monospace' }}>morning_briefing</span> agent.
+      <p className="text-[13px] font-medium text-text2">
+        Daily briefing via <span className="font-mono bg-bg px-1 rounded-sm">morning_briefing</span> agent.
         Runs automatically at 8am on weekdays.
       </p>
       <button
         onClick={triggerBriefing}
         disabled={status === 'running'}
-        className="mt-3 text-xs px-3 py-1.5 rounded transition-opacity hover:opacity-80 disabled:opacity-40"
-        style={{ backgroundColor: '#0073BB', color: '#fff', fontFamily: 'var(--font-inter), sans-serif' }}
+        className="mt-4 text-[12px] font-bold uppercase tracking-wider px-4 py-2 bg-blue text-white rounded-none transition-colors hover:bg-black disabled:opacity-40"
       >
         {status === 'running' ? 'Triggering…' : 'Run Now'}
       </button>
       {status === 'done' && (
-        <p className="text-xs mt-2" style={{ color: 'var(--green)' }}>Briefing triggered — check Telegram.</p>
+        <p className="text-[13px] font-bold text-green mt-3">Briefing triggered — check Telegram.</p>
       )}
       {status === 'error' && (
-        <p className="text-xs mt-2" style={{ color: 'var(--red)' }}>Failed to trigger. Check agent status.</p>
+        <p className="text-[13px] font-bold text-red mt-3">Failed to trigger. Check agent status.</p>
       )}
     </SectionCard>
   )
@@ -240,7 +238,7 @@ export default function DashboardPage() {
   if (isError) {
     return (
       <div className="p-8">
-        <p className="text-sm" style={{ color: 'var(--red)' }}>Failed to load dashboard. Check your connection.</p>
+        <p className="text-sm font-bold text-red">Failed to load dashboard. Check your connection.</p>
       </div>
     )
   }
@@ -257,21 +255,24 @@ export default function DashboardPage() {
   const statCardDefs = buildStatCards(role, cards, isLoading)
 
   return (
-    <div>
+    <div className="min-h-full font-sans text-text1">
       <AlertBar alerts={alerts} />
 
       <div className="p-6 max-w-7xl">
-        <h1 className="text-xl font-semibold mb-5" style={{ fontFamily: 'var(--font-syne), sans-serif', color: 'var(--text1)' }}>
+        <h1 className="text-2xl font-bold tracking-tight mb-6">
           Home
         </h1>
 
         {/* Stat cards */}
-        <div className="grid gap-4 mb-6" style={{ gridTemplateColumns: `repeat(${statCardDefs.length}, 1fr)` }}>
+        <div 
+          className="grid gap-4 mb-6" 
+          style={{ gridTemplateColumns: `repeat(${statCardDefs.length}, 1fr)` }}
+        >
           {statCardDefs}
         </div>
 
         {/* Two-column layout */}
-        <div className="grid gap-5" style={{ gridTemplateColumns: '2fr 1fr' }}>
+        <div className="grid gap-5 md:grid-cols-[2fr_1fr]">
 
           {/* Left column */}
           <div className="flex flex-col gap-5">
@@ -310,7 +311,7 @@ export default function DashboardPage() {
                       loading={markDone.isPending}
                     />
                   ))}
-                  <p className="text-xs mt-3" style={{ color: 'var(--text3)' }}>
+                  <p className="text-[12px] font-bold text-text3 uppercase tracking-wider mt-4">
                     Full task management in Work → Tasks.
                   </p>
                 </>
@@ -346,25 +347,19 @@ export default function DashboardPage() {
                 invoiceAlerts.map((inv) => {
                   const days = daysOverdue(inv.due_date)
                   return (
-                    <div key={inv.id} className="py-2.5" style={{ borderBottom: '1px solid var(--border)' }}>
+                    <div key={inv.id} className="py-3 border-b border-border last:border-0">
                       <div className="flex items-center justify-between gap-2">
-                        <p
-                          className="text-xs font-medium"
-                          style={{ fontFamily: 'var(--font-ibm-plex-mono), monospace', color: 'var(--text1)' }}
-                        >
+                        <p className="text-[13px] font-bold text-text1 font-mono">
                           {inv.invoice_no}
                         </p>
-                        <p
-                          className="text-xs font-semibold"
-                          style={{ fontFamily: 'var(--font-ibm-plex-mono), monospace', color: 'var(--red)' }}
-                        >
+                        <p className="text-[13px] font-bold text-red font-mono">
                           {formatINR(inv.total)}
                         </p>
                       </div>
-                      <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--text2)' }}>
+                      <p className="text-[12px] font-bold text-text2 uppercase tracking-wider mt-1 truncate">
                         {inv.client_name || '—'}
                       </p>
-                      <p className="text-xs mt-0.5" style={{ color: 'var(--red)' }}>
+                      <p className="text-[12px] font-bold text-red uppercase tracking-wider mt-0.5">
                         {days} day{days !== 1 ? 's' : ''} overdue
                       </p>
                     </div>
@@ -400,7 +395,7 @@ function buildStatCards(
     return [
       <StatCard key="rev" label="Revenue this month" value={formatINR(cards.revenueThisMonth ?? 0)} />,
       <StatCard key="deals" label="Open deals" value={cards.openDeals ?? 0} />,
-      <StatCard key="tasks" label="Tasks due today" value={cards.tasksDueToday} valueColor={cards.tasksDueToday > 0 ? 'var(--amber)' : undefined} />,
+      <StatCard key="tasks" label="Tasks due today" value={cards.tasksDueToday} valueColor={cards.tasksDueToday > 0 ? 'text-amber' : undefined} />,
       <StatCard key="cash" label="Cash position" value={cards.cashPosition != null ? formatINR(cards.cashPosition) : '—'} sub="Set in CEO Panel" />,
     ]
   }
@@ -409,7 +404,7 @@ function buildStatCards(
     return [
       <StatCard key="rev" label="Revenue this month" value={formatINR(cards.revenueThisMonth ?? 0)} />,
       <StatCard key="deals" label="Open deals" value={cards.openDeals ?? 0} />,
-      <StatCard key="tasks" label="Tasks due today" value={cards.tasksDueToday} valueColor={cards.tasksDueToday > 0 ? 'var(--amber)' : undefined} />,
+      <StatCard key="tasks" label="Tasks due today" value={cards.tasksDueToday} valueColor={cards.tasksDueToday > 0 ? 'text-amber' : undefined} />,
       <StatCard key="team" label="Team tasks pending" value={cards.teamTasksPending ?? 0} />,
     ]
   }
@@ -417,21 +412,22 @@ function buildStatCards(
   // cto — 3 cards only
   return [
     <StatCard key="proj" label="Active projects" value={cards.activeProjects ?? 0} />,
-    <StatCard key="mine" label="My tasks today" value={cards.myTasksToday ?? 0} valueColor={(cards.myTasksToday ?? 0) > 0 ? 'var(--amber)' : undefined} />,
-    <StatCard key="tasks" label="Tasks due today" value={cards.tasksDueToday} valueColor={cards.tasksDueToday > 0 ? 'var(--amber)' : undefined} />,
+    <StatCard key="mine" label="My tasks today" value={cards.myTasksToday ?? 0} valueColor={(cards.myTasksToday ?? 0) > 0 ? 'text-amber' : undefined} />,
+    <StatCard key="tasks" label="Tasks due today" value={cards.tasksDueToday} valueColor={cards.tasksDueToday > 0 ? 'text-amber' : undefined} />,
   ]
 }
 
 function SkeletonList({ rows }: { rows: number }) {
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-4">
       {Array.from({ length: rows }).map((_, i) => (
         <div key={i} className="flex items-center gap-3">
-          <div className="w-2 h-2 rounded-full animate-pulse flex-shrink-0" style={{ backgroundColor: '#E0E3E3' }} />
-          <div className="h-3 rounded animate-pulse flex-1" style={{ backgroundColor: '#E0E3E3' }} />
-          <div className="h-3 w-12 rounded animate-pulse flex-shrink-0" style={{ backgroundColor: '#E0E3E3' }} />
+          <div className="w-2 h-2 rounded-none animate-pulse bg-bg flex-shrink-0" />
+          <div className="h-3 rounded-none animate-pulse bg-bg flex-1" />
+          <div className="h-3 w-12 rounded-none animate-pulse bg-bg flex-shrink-0" />
         </div>
       ))}
     </div>
   )
 }
+

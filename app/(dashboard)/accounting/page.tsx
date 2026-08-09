@@ -15,7 +15,9 @@ import { ArrowUpRight, Calculator, Plus, CreditCard, Receipt, Building, External
 // Both talk to the exact same backend (api/routes/accounting.ts) - this page
 // makes plain same-origin fetches, no CORS/cross-subdomain-cookie plumbing
 // needed here at all, unlike the standalone app.
-const FULL_APP_URL = 'https://accounting.etherence.com'
+// Use env var so this works across environments without a code change.
+// NEXT_PUBLIC_ACCOUNTING_URL must be set in .env for production.
+const FULL_APP_URL = process.env.NEXT_PUBLIC_ACCOUNTING_URL || 'https://accounting.etherence.com'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

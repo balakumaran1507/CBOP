@@ -1607,15 +1607,14 @@ export default function HiringPage() {
   })
   const userRole = sessionData?.role || ''
 
-  const { data: companiesData } = useQuery({
-    queryKey: ['companies'],
-    queryFn:  () => fetch('/api/settings/companies').then((r) => r.json()),
-  })
-  const companies: Company[] = companiesData?.companies || []
+  // /api/settings/companies is CEO-only — COO/CTO would get 403 and see blank
+  // company dropdowns. The session already carries the user's accessible
+  // companies (same data, id+name), so use that instead.
+  const companies: Company[] = sessionData?.companies || []
 
   const { data: usersData } = useQuery({
     queryKey: ['users'],
-    queryFn:  () => fetch('/api/settings/users').then((r) => r.json()),
+    queryFn:  () => fetch('/api/settings/users', { credentials: 'include' }).then((r) => r.json()),
   })
   const users: User[] = usersData?.users || []
 

@@ -51,8 +51,12 @@ function LoginForm() {
       setError(authError.message || 'Invalid email or password')
       setLoading(false)
     } else if (redirectTarget.startsWith('http')) {
+      // External redirect — loading stays true intentionally (page is leaving).
       window.location.href = redirectTarget
     } else {
+      // Reset loading before the router push so if any middleware guard bounces
+      // the user back to /login, the submit button is usable again immediately.
+      setLoading(false)
       router.push(redirectTarget)
     }
   }

@@ -24,7 +24,14 @@ async function getSessionUser(): Promise<SessionPayload | null> {
   const cookieHeader = cookieStore.getAll().map((c) => `${c.name}=${c.value}`).join('; ')
 
   try {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3003'}/api/session`, {
+    // CBOP_API_URL is the preferred server-side URL (set on the server, never
+    // exposed to the browser). NEXT_PUBLIC_APP_URL works for systemd/bare-node
+    // deployments where the process can reach itself at its own public URL.
+    // localhost:3003 is the final fallback for local dev only — in a Docker
+    // container where the app listens on a different address this would fail,
+    // so always set CBOP_API_URL in containerised environments.
+    const apiBase = process.env.CBOP_API_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3003'
+    const res = await fetch(`${apiBase}/api/session`, {
       headers: { Cookie: cookieHeader },
       cache: 'no-store',
     })

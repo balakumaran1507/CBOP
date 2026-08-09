@@ -68,9 +68,14 @@ export function NotificationBell() {
     if (markingRef.current.has(id)) return
     markingRef.current.add(id)
     try {
-      await fetch(`/api/notifications/${id}/read`, { method: 'PATCH', credentials: 'include' })
-      setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))
-      setUnreadCount(prev => Math.max(0, prev - 1))
+      const res = await fetch(`/api/notifications/${id}/read`, { method: 'PATCH', credentials: 'include' })
+      // Only update local state if the server actually accepted the change.
+      // On error the 60-second poll will restore the correct count anyway, but
+      // this prevents the badge from visibly jumping on transient failures.
+      if (res.ok) {
+        setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))
+        setUnreadCount(prev => Math.max(0, prev - 1))
+      }
     } finally {
       markingRef.current.delete(id)
     }
@@ -83,7 +88,11 @@ export function NotificationBell() {
   }
 
   function handleNotifClick(n: Notification) {
-    if (!n.read) markRead(n.id)
+    // Fire-and-forget is intentional here: we don't want to delay navigation
+    // waiting for the PATCH. markRead guards against double-invocation with
+    // markingRef, and checks res.ok before updating state, so a failure leaves
+    // the notification as unread and the count unchanged until the next poll.
+    if (!n.read) void markRead(n.id)
     setOpen(false)
     if (n.link) router.push(n.link)
   }

@@ -20,6 +20,9 @@ export function NotificationBell() {
   const [unreadCount, setUnreadCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  // Guards against double-fire: if markRead(id) is already in-flight, a rapid
+  // second click on the same notification must not decrement unreadCount again.
+  const markingRef = useRef<Set<string>>(new Set())
 
   // Fetch unread count on mount + every 60s
   useEffect(() => {
@@ -62,9 +65,15 @@ export function NotificationBell() {
   }
 
   async function markRead(id: string) {
-    await fetch(`/api/notifications/${id}/read`, { method: 'PATCH', credentials: 'include' })
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))
-    setUnreadCount(prev => Math.max(0, prev - 1))
+    if (markingRef.current.has(id)) return
+    markingRef.current.add(id)
+    try {
+      await fetch(`/api/notifications/${id}/read`, { method: 'PATCH', credentials: 'include' })
+      setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))
+      setUnreadCount(prev => Math.max(0, prev - 1))
+    } finally {
+      markingRef.current.delete(id)
+    }
   }
 
   async function markAllRead() {

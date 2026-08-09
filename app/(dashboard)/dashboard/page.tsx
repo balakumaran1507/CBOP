@@ -391,7 +391,7 @@ function buildStatCards(
     ]
   }
 
-  if (role === 'ceo') {
+  if (role === 'ceo' || role === 'creator') {
     return [
       <StatCard key="rev" label="Revenue this month" value={formatINR(cards.revenueThisMonth ?? 0)} />,
       <StatCard key="deals" label="Open deals" value={cards.openDeals ?? 0} />,

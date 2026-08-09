@@ -22,7 +22,7 @@ export default function ForgotPasswordPage() {
     if (resetErr) {
       setError(resetErr.message || 'Failed to send link')
     } else {
-      setMsg('Check your email for a reset link.')
+      setMsg('Check your email — click the link to sign straight in to CBOP.')
     }
     setLoading(false)
   }
@@ -33,10 +33,10 @@ export default function ForgotPasswordPage() {
         
         <div className="mb-10">
           <h1 className="text-4xl font-bold tracking-tight text-text1 mb-2">
-            Reset Password
+            Sign in with link
           </h1>
           <p className="text-text2 text-[15px] font-medium tracking-wide">
-            Enter your email to receive a reset link.
+            Enter your email — we&apos;ll send a one-click sign-in link.
           </p>
         </div>
 
@@ -72,7 +72,7 @@ export default function ForgotPasswordPage() {
               disabled={loading}
               className="relative w-full h-12 mt-2 flex items-center justify-center bg-text1 text-white font-bold text-[15px] transition-all hover:bg-black disabled:opacity-70 disabled:pointer-events-none rounded-none uppercase tracking-wider"
             >
-              {loading ? 'Sending…' : 'Send Reset Link'}
+              {loading ? 'Sending…' : 'Send Sign-in Link'}
             </button>
           </form>
 

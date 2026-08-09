@@ -395,13 +395,19 @@ function DealDetailSlideOver({ deal, onClose }: { deal: Deal | null; onClose: ()
   async function addActivity() {
     if (!deal || !newNote.trim()) return
     setSaving(true)
-    await fetch(`/api/deals/${deal.id}/activities`, {
-      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: newType, note: newNote.trim() }),
-    })
-    setSaving(false)
-    setNewNote('')
-    qc.invalidateQueries({ queryKey: ['deal-activities', deal.id] })
+    try {
+      const res = await fetch(`/api/deals/${deal.id}/activities`, {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: newType, note: newNote.trim() }),
+      })
+      if (!res.ok) throw new Error('Failed to save activity')
+      setNewNote('')
+      qc.invalidateQueries({ queryKey: ['deal-activities', deal.id] })
+    } catch {
+      // setSaving(false) runs in finally — button re-enables automatically
+    } finally {
+      setSaving(false)
+    }
   }
 
   if (!deal) return null

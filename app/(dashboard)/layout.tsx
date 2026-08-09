@@ -3,7 +3,6 @@ import { redirect } from 'next/navigation'
 import { Topbar } from '@/app/components/topbar'
 import { Sidebar } from '@/app/components/sidebar'
 import { CompanyProvider } from '@/app/lib/company-context'
-import { CommandPalette } from '@/app/components/command-palette'
 import type { NavManifestGroup } from '@/api/lib/modules'
 import type { Company } from '@/app/lib/company-context'
 
@@ -60,7 +59,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
           </main>
         </div>
       </div>
-      <CommandPalette role={user.role} />
     </CompanyProvider>
   )
 }

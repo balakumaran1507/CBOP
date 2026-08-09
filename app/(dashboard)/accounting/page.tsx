@@ -107,16 +107,25 @@ export default function AccountingPage() {
   })
   const apOutstanding = (billsData?.bills ?? []).reduce((s, b) => s + (typeof b.amount === 'string' ? parseFloat(b.amount) : b.amount), 0)
 
-  const { data: invoicesData } = useQuery<{ invoices: { total: string | number; status: string; company_name: string }[] }>({
-    queryKey: ['sales-invoices-all'],
+  const { data: invoicesData } = useQuery<{ invoices: { total: string | number; status: string }[] }>({
+    // Key must include companyId — AR Outstanding must refresh when the company switcher changes.
+    queryKey: ['sales-invoices-all', companyId],
     queryFn: async () => {
-      const res = await fetch(`/api/invoices?all=true`, { credentials: 'include' })
+      const res = await fetch(`/api/invoices?all=true`, {
+        credentials: 'include',
+        // Pass the active company so requireAuth scopes the query to exactly this company,
+        // not the full set of companyIds the user has access to.
+        headers: companyId ? { 'x-active-company-id': companyId } : {},
+      })
       if (!res.ok) throw new Error('Failed to load invoices')
       return res.json()
     },
+    enabled: !!companyId,
   })
+  // API already filters by active company via x-active-company-id — no client-side
+  // company_name string match needed (which would break silently on a company rename).
   const arOutstanding = (invoicesData?.invoices ?? [])
-    .filter((i) => activeCompany && i.company_name === activeCompany.name && (i.status === 'sent' || i.status === 'overdue'))
+    .filter((i) => i.status === 'sent' || i.status === 'overdue')
     .reduce((s, i) => s + (typeof i.total === 'string' ? parseFloat(i.total) : i.total), 0)
 
   const { data: expensesData } = useQuery<{ expenses: Expense[] }>({

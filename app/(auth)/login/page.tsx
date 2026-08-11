@@ -1,5 +1,5 @@
 'use client'
-import { Suspense, useState } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { authClient } from '@/app/lib/auth-client'
 
@@ -35,6 +35,25 @@ function LoginForm() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [checkingSession, setCheckingSession] = useState(true)
+
+  // If already logged in, skip the login form and go straight to the destination.
+  // This prevents the "Continue with CBOP → already authed → confused login loop"
+  // that happens when accounting.etherence.com redirects here and the user is
+  // already signed in.
+  useEffect(() => {
+    authClient.getSession().then(({ data }) => {
+      if (data?.session) {
+        if (redirectTarget.startsWith('http')) {
+          window.location.href = redirectTarget
+        } else {
+          router.replace(redirectTarget)
+        }
+      } else {
+        setCheckingSession(false)
+      }
+    }).catch(() => setCheckingSession(false))
+  }, [redirectTarget, router])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -59,6 +78,17 @@ function LoginForm() {
       setLoading(false)
       router.push(redirectTarget)
     }
+  }
+
+  if (checkingSession) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-bg">
+        <svg className="animate-spin h-6 w-6 text-text3" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+      </div>
+    )
   }
 
   return (

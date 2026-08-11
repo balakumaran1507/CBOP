@@ -2,7 +2,6 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useCompany } from '@/app/lib/company-context'
 import {
   LayoutDashboard, TrendingUp, Calculator, Landmark,
   Megaphone, Mail, UserCheck, Share2, Newspaper, BarChart2, Globe,
@@ -44,7 +43,6 @@ const ICONS: Record<string, LucideIcon> = {
 
 export function Sidebar({ nav }: { nav: NavManifestGroup[] }) {
   const pathname = usePathname()
-  const { activeCompany } = useCompany()
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [mounted, setMounted] = useState(false)
 
@@ -95,27 +93,6 @@ export function Sidebar({ nav }: { nav: NavManifestGroup[] }) {
         .cbop-nav-link:hover { background-color: rgba(255,255,255,0.05) !important; color: rgba(255,255,255,0.85) !important; }
         .cbop-group-btn:hover { background-color: rgba(255,255,255,0.04) !important; }
       `}</style>
-
-      {/* CBOP wordmark — pinned, not scrollable */}
-      <div
-        style={{
-          padding: '14px 16px 10px',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          flexShrink: 0,
-        }}
-      >
-        <span
-          style={{
-            fontFamily: 'var(--font-syne)',
-            fontSize: 16,
-            fontWeight: 700,
-            color: 'white',
-            letterSpacing: '0.06em',
-          }}
-        >
-          CBOP
-        </span>
-      </div>
 
       {/* Scrollable nav */}
       <div
@@ -224,28 +201,6 @@ export function Sidebar({ nav }: { nav: NavManifestGroup[] }) {
         })}
       </div>
 
-      {/* Footer: active company name only */}
-      <div
-        style={{
-          flexShrink: 0,
-          borderTop: '1px solid rgba(255,255,255,0.07)',
-          padding: '8px 14px',
-        }}
-      >
-        <div
-          style={{
-            fontSize: 11,
-            color: '#8A9BA8',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            fontFamily: 'var(--font-inter), sans-serif',
-          }}
-          title={activeCompany?.name}
-        >
-          {activeCompany?.name ?? '—'}
-        </div>
-      </div>
     </nav>
   )
 }

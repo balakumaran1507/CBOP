@@ -63,6 +63,127 @@ interface Expense {
   narration: string | null
 }
 
+// ── Ghost skeleton overlay — shown when accounting isn't set up yet ────────────
+
+function GhostAppLayout({ companyName, fullAppUrl }: { companyName: string; fullAppUrl: string }) {
+  // Static ghost rows for the expense table — gives the impression of real data without pulse
+  const ghostRows = [
+    { dw: 56, cw: 112, aw: 80, dsc: '72%' },
+    { dw: 60, cw: 88,  aw: 72, dsc: '55%' },
+    { dw: 56, cw: 104, aw: 80, dsc: '80%' },
+    { dw: 60, cw: 72,  aw: 64, dsc: '40%' },
+    { dw: 56, cw: 96,  aw: 80, dsc: '65%' },
+    { dw: 60, cw: 80,  aw: 72, dsc: '50%' },
+  ]
+
+  return (
+    <div className="relative">
+      {/* ── Dimmed ghost of what the app looks like when data exists ── */}
+      <div className="space-y-6 opacity-[0.65] pointer-events-none select-none" aria-hidden>
+
+        {/* Stat cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          {[
+            { iw: 96, vw: 112 },
+            { iw: 88, vw: 96  },
+            { iw: 80, vw: 80  },
+          ].map((s, i) => (
+            <div key={i} className="bg-card border border-border rounded-2xl p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-8 h-8 rounded-lg bg-border" />
+                <div className="h-3 rounded bg-border" style={{ width: s.iw }} />
+              </div>
+              <div className="h-9 rounded bg-border/80" style={{ width: s.vw }} />
+            </div>
+          ))}
+        </div>
+
+        {/* Quick-add row */}
+        <div className="bg-card border border-border rounded-2xl p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <div className="w-4 h-4 rounded bg-border" />
+            <div className="h-4 w-40 rounded bg-border" />
+            <div className="h-5 w-6 rounded bg-border/70 ml-1" />
+          </div>
+          <div className="flex gap-3 flex-wrap items-center">
+            {[210, 168, 108, 136, 200, 112].map((w, i) => (
+              <div key={i} className="h-[42px] rounded-xl bg-border/80" style={{ width: w }} />
+            ))}
+          </div>
+        </div>
+
+        {/* Recent expenses table */}
+        <div className="bg-card border border-border rounded-2xl overflow-hidden">
+          <div className="p-6 border-b border-border">
+            <div className="h-4 w-36 rounded bg-border mb-1.5" />
+            <div className="h-3 w-24 rounded bg-border/70" />
+          </div>
+          <div className="divide-y divide-border/60">
+            {ghostRows.map((r, i) => (
+              <div key={i} className="flex gap-8 px-6 py-3.5 items-center">
+                <div className="h-3 rounded bg-border/80 shrink-0" style={{ width: r.dw }} />
+                <div className="h-3 rounded bg-border shrink-0" style={{ width: r.cw }} />
+                <div className="h-3 rounded bg-border/60 grow" style={{ maxWidth: r.dsc }} />
+                <div className="h-3 rounded bg-border/80 shrink-0 ml-auto" style={{ width: r.aw }} />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* "Need more power" banner */}
+        <div className="bg-blue/5 border border-blue/20 rounded-2xl p-6 flex justify-between items-center flex-wrap gap-4">
+          <div className="space-y-2">
+            <div className="h-4 w-32 rounded bg-border" />
+            <div className="h-3 w-80 rounded bg-border/70" />
+          </div>
+          <div className="h-10 w-40 rounded-xl bg-border/80" />
+        </div>
+      </div>
+
+      {/* ── Lock overlay + setup card ── */}
+      <div className="absolute inset-0 flex items-center justify-center"
+           style={{ background: 'rgba(242,243,243,0.55)' }}>
+        <div
+          className="bg-card border border-border rounded-2xl px-8 py-8 shadow-2xl text-center"
+          style={{ maxWidth: 420, width: 'calc(100% - 32px)' }}
+        >
+          {/* Icon */}
+          <div className="w-12 h-12 rounded-2xl border border-blue/20 flex items-center justify-center mx-auto mb-5"
+               style={{ background: 'rgba(0,115,187,0.08)' }}>
+            <Calculator size={24} className="text-blue" />
+          </div>
+
+          {/* Heading */}
+          <p className="font-bold text-[18px] text-text1 m-0 mb-0.5 tracking-tight leading-snug">
+            Accounting isn't set up yet
+          </p>
+          <p className="text-[14px] text-text2 font-semibold m-0 mb-4">
+            for {companyName}
+          </p>
+
+          {/* Body */}
+          <p className="text-[13px] text-text2 m-0 mb-1.5 leading-relaxed">
+            First-time setup seeds a standard chart of accounts — cash, bank, revenue, expenses, GST. Takes about 30 seconds.
+          </p>
+          <p className="text-[11px] text-text3 font-medium m-0 mb-6 uppercase tracking-wide">
+            CEO or creator access required
+          </p>
+
+          {/* CTA */}
+          <a
+            href={`${fullAppUrl}/accounts`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 bg-blue text-white rounded-xl px-6 py-2.5 text-[14px] font-bold hover:bg-blue/90 transition-all active:scale-95 shadow-sm"
+          >
+            Set up now <ArrowUpRight size={15} />
+          </a>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function AccountingPage() {
@@ -71,6 +192,7 @@ export default function AccountingPage() {
   const companyId = activeCompany?.id ?? null
 
   const [quickAdd, setQuickAdd] = useState({ expense_account_id: '', bank_account_id: '', amount: '', description: '', date: new Date().toISOString().slice(0, 10) })
+  const [quickAddSuccess, setQuickAddSuccess] = useState(false)
   const quickAddRef = useRef<HTMLSelectElement>(null)
 
   const { data: accountsData, isLoading: accountsLoading } = useQuery<{ accounts: Account[] }>({
@@ -144,9 +266,11 @@ export default function AccountingPage() {
   // Tally-style shortcut: "n" anywhere on the page jumps focus to quick-add category field
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'n' && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName)) {
+      if ((e.key === 'n' || e.key === 'N') && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName) && !e.metaKey && !e.ctrlKey) {
         e.preventDefault()
         quickAddRef.current?.focus()
+        // Scroll the quick-add form into view if it's off screen
+        quickAddRef.current?.closest('.quick-add-section')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
       }
     }
     document.addEventListener('keydown', onKey)
@@ -170,6 +294,8 @@ export default function AccountingPage() {
     },
     onSuccess: () => {
       setQuickAdd((p) => ({ ...p, amount: '', description: '' }))
+      setQuickAddSuccess(true)
+      setTimeout(() => setQuickAddSuccess(false), 2500)
       qc.invalidateQueries({ queryKey: ['acct-expenses', companyId] })
       qc.invalidateQueries({ queryKey: ['acct-bank-accounts', companyId] })
     },
@@ -202,27 +328,35 @@ export default function AccountingPage() {
         <div className="py-20 text-center text-text3 font-medium text-[15px] bg-card border border-border/50 rounded-2xl">
           Select a company to continue.
         </div>
-      ) : !accountsLoading && !hasChartOfAccounts ? (
-        <div className="bg-card border border-border/60 rounded-3xl p-10 text-center shadow-sm max-w-2xl mx-auto mt-12 animate-in slide-in-from-bottom-4">
-          <div className="w-16 h-16 bg-blue/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
-            <Calculator size={32} className="text-blue" />
+      ) : accountsLoading ? (
+        /* Skeleton — shows while data loads instead of misleading ₹0 cards */
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="bg-card border border-border/50 rounded-2xl p-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-8 h-8 rounded-lg bg-border/60 animate-pulse" />
+                  <div className="h-3 w-24 rounded bg-border/60 animate-pulse" />
+                </div>
+                <div className="h-8 w-32 rounded bg-border/60 animate-pulse" />
+              </div>
+            ))}
           </div>
-          <h2 className="font-bold text-xl text-text1 m-0 mb-3 tracking-tight">
-            No chart of accounts set up yet for {activeCompany?.name}
-          </h2>
-          <p className="text-[14px] text-text2 m-0 mb-8 max-w-[440px] mx-auto leading-relaxed font-medium">
-            Set-up is a CEO/creator action, done once, in the full Accounting app - it seeds a standard
-            chart (cash, bank, revenue, expenses, GST accounts) so the rest of this works.
-          </p>
-          <a 
-            href={`${FULL_APP_URL}/accounts`} 
-            target="_blank" 
-            rel="noopener noreferrer" 
-            className="inline-flex items-center gap-2 bg-blue text-white rounded-xl px-6 py-3 text-[14px] font-bold hover:bg-blue/90 transition-all hover:scale-105 active:scale-95 shadow-sm"
-          >
-            Set up in full app <ArrowUpRight size={16} />
-          </a>
+          <div className="bg-card border border-border/50 rounded-2xl p-6">
+            <div className="h-4 w-40 rounded bg-border/60 animate-pulse mb-4" />
+            <div className="flex gap-3">
+              {[200, 160, 100, 130, 180].map((w, i) => (
+                <div key={i} style={{ width: w }} className="h-[42px] rounded-xl bg-border/60 animate-pulse" />
+              ))}
+            </div>
+          </div>
         </div>
+      ) : !hasChartOfAccounts ? (
+        /* Ghost app + lock card — shown when no chart of accounts exists */
+        <GhostAppLayout
+          companyName={activeCompany?.name ?? 'this company'}
+          fullAppUrl={FULL_APP_URL}
+        />
       ) : (
         <div className="space-y-6">
           {/* Summary cards */}
@@ -247,10 +381,17 @@ export default function AccountingPage() {
           </div>
 
           {/* Quick add expense */}
-          <div className="bg-card border border-border/50 rounded-2xl p-6 shadow-sm">
+          <div className="quick-add-section bg-card border border-border/50 rounded-2xl p-6 shadow-sm">
             <h3 className="font-bold text-[15px] text-text1 m-0 mb-4 flex items-center gap-2">
               <Plus size={18} className="text-blue" /> Quick Add Expense
+              <kbd className="ml-1 text-[10px] font-mono px-1.5 py-0.5 rounded bg-border/40 text-text3 border border-border/60">N</kbd>
             </h3>
+            {(expenseAccounts.length === 0 || bankAccounts.length === 0) && (
+              <div className="mb-3 px-3 py-2 rounded-lg bg-amber/10 border border-amber/20 text-[12px] text-amber font-medium">
+                {expenseAccounts.length === 0 ? 'No expense accounts found — set up your chart of accounts in the full app.' : 'No bank/cash accounts found — add one in the full app.'}
+                {' '}<a href={`${FULL_APP_URL}/accounts`} target="_blank" rel="noopener noreferrer" className="underline">Open full app</a>
+              </div>
+            )}
             <div className="flex flex-wrap gap-3 items-center">
               <div className="relative flex-[1_1_200px]">
                 <select
@@ -319,6 +460,12 @@ export default function AccountingPage() {
             </div>
             {quickAddMutation.isError && (
               <p className="text-red text-[13px] font-medium m-0 mt-3 animate-in fade-in">{(quickAddMutation.error as Error).message}</p>
+            )}
+            {quickAddSuccess && (
+              <p className="text-green text-[13px] font-semibold m-0 mt-3 animate-in fade-in flex items-center gap-1.5">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="7" fill="#1D8102" /><path d="M4 7l2 2 4-4" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                Expense added
+              </p>
             )}
           </div>
 

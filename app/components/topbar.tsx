@@ -1,18 +1,27 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { useCompany } from '@/app/lib/company-context'
 import { authClient } from '@/app/lib/auth-client'
 import { NotificationBell } from '@/app/components/notification-bell'
-import { Settings, User, ChevronDown, LogOut } from 'lucide-react'
+import { NavSearch } from '@/app/components/nav-search'
+import { Settings, User, ChevronDown, LogOut, Building2 } from 'lucide-react'
 import type { Company } from '@/app/lib/company-context'
+import type { NavManifestGroup } from '@/api/lib/modules'
 
 const AVATAR_BG: Record<string, string> = {
   creator: '#E8820C',
   ceo:     '#0073BB',
-  coo:     '#5A6A74',
-  cto:     '#5A6A74',
+  coo:     '#1D8102',
+  cto:     '#7B61FF',
+}
+
+const ROLE_LABEL: Record<string, string> = {
+  creator: 'Creator',
+  ceo:     'CEO',
+  coo:     'COO',
+  cto:     'CTO',
 }
 
 interface TopbarProps {
@@ -20,12 +29,7 @@ interface TopbarProps {
   companies: Company[]
   name: string
   email: string
-}
-
-interface Breadcrumb {
-  label: string
-  href: string
-  isCurrent: boolean
+  nav: NavManifestGroup[]
 }
 
 function getInitials(name: string): string {
@@ -37,57 +41,36 @@ function getInitials(name: string): string {
     .toUpperCase()
 }
 
-function buildBreadcrumbs(pathname: string): Breadcrumb[] {
-  if (pathname === '/dashboard') return []
-  const segments = pathname.split('/').filter(Boolean).slice(0, 3)
-  return segments.map((seg, i) => ({
-    label: seg
-      .replace(/-/g, ' ')
-      .replace(/\b\w/g, (c) => c.toUpperCase()),
-    href: '/' + segments.slice(0, i + 1).join('/'),
-    isCurrent: i === segments.length - 1,
-  }))
-}
-
-export function Topbar({ role, companies, name, email }: TopbarProps) {
+export function Topbar({ role, companies, name, email, nav }: TopbarProps) {
   const router = useRouter()
-  const pathname = usePathname()
   const { activeCompany, setActiveCompany, companies: ctxCompanies } = useCompany()
 
-  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [userMenuOpen,       setUserMenuOpen]       = useState(false)
   const [companySwitcherOpen, setCompanySwitcherOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
 
-  const profileRef = useRef<HTMLDivElement>(null)
+  const profileRef         = useRef<HTMLDivElement>(null)
   const companySwitcherRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { setMounted(true) }, [])
 
-  // Close profile dropdown on outside click
   useEffect(() => {
     if (!userMenuOpen) return
-    function handleMouseDown(e: MouseEvent) {
-      if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
-        setUserMenuOpen(false)
-      }
+    function onDown(e: MouseEvent) {
+      if (profileRef.current && !profileRef.current.contains(e.target as Node)) setUserMenuOpen(false)
     }
-    document.addEventListener('mousedown', handleMouseDown)
-    return () => document.removeEventListener('mousedown', handleMouseDown)
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
   }, [userMenuOpen])
 
-  // Close company switcher on outside click
   useEffect(() => {
     if (!companySwitcherOpen) return
-    function handleMouseDown(e: MouseEvent) {
-      if (companySwitcherRef.current && !companySwitcherRef.current.contains(e.target as Node)) {
-        setCompanySwitcherOpen(false)
-      }
+    function onDown(e: MouseEvent) {
+      if (companySwitcherRef.current && !companySwitcherRef.current.contains(e.target as Node)) setCompanySwitcherOpen(false)
     }
-    document.addEventListener('mousedown', handleMouseDown)
-    return () => document.removeEventListener('mousedown', handleMouseDown)
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
   }, [companySwitcherOpen])
-
-  const breadcrumbs = buildBreadcrumbs(pathname)
 
   async function handleLogout() {
     await authClient.signOut()
@@ -97,186 +80,208 @@ export function Topbar({ role, companies, name, email }: TopbarProps) {
   return (
     <header
       style={{
-        backgroundColor: '#232F3E',
-        height: 48,
+        backgroundColor: '#1A2332',
+        height: 52,
         flexShrink: 0,
         display: 'flex',
         alignItems: 'center',
-        paddingLeft: 16,
-        paddingRight: 16,
         zIndex: 50,
-        gap: 12,
+        borderBottom: '1px solid rgba(255,255,255,0.06)',
       }}
     >
       <style>{`
-        .cbop-menu-item:hover { background-color: #F8F9FA !important; }
-        .cbop-company-option:hover { background-color: #F5F7F9 !important; }
-        .cbop-profile-btn:hover { background-color: rgba(255,255,255,0.08) !important; }
+        .cbop-nav-hover:hover { background-color: rgba(255,255,255,0.07) !important; }
+        .cbop-menu-item:hover { background-color: #F5F7FA !important; }
+        .cbop-company-opt:hover { background-color: #F0F4F8 !important; }
+        .cbop-company-opt-active { background-color: #EBF4FB !important; }
+        .cbop-signout:hover { background-color: #FEF2F0 !important; }
       `}</style>
 
-      {/* LEFT: Breadcrumbs */}
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-        {breadcrumbs.map((crumb, i) => (
-          <span key={crumb.href} style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-            {i > 0 && (
-              <span
-                style={{
-                  fontSize: 12,
-                  color: '#8A9BA8',
-                  userSelect: 'none',
-                  flexShrink: 0,
-                }}
-              >
-                ›
-              </span>
-            )}
-            {crumb.isCurrent ? (
-              <span
-                style={{
-                  fontSize: 13,
-                  fontFamily: 'var(--font-inter), sans-serif',
-                  color: '#ffffff',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {crumb.label}
-              </span>
-            ) : (
-              <Link
-                href={crumb.href}
-                style={{
-                  fontSize: 13,
-                  fontFamily: 'var(--font-inter), sans-serif',
-                  color: '#8A9BA8',
-                  textDecoration: 'none',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {crumb.label}
-              </Link>
-            )}
-          </span>
-        ))}
+      {/* ── BRAND (matches sidebar width exactly) ── */}
+      <div
+        style={{
+          width: 240,
+          minWidth: 240,
+          height: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          paddingLeft: 16,
+          paddingRight: 16,
+          flexShrink: 0,
+          borderRight: '1px solid rgba(255,255,255,0.06)',
+        }}
+      >
+        <span
+          style={{
+            fontFamily: 'var(--font-syne)',
+            fontSize: 15,
+            fontWeight: 700,
+            color: '#ffffff',
+            letterSpacing: '0.08em',
+          }}
+        >
+          CBOP
+        </span>
       </div>
 
-      {/* CENTER: Company switcher (only after mount to avoid hydration mismatch) */}
-      {mounted && (
-        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-          {ctxCompanies.length <= 1 ? (
-            <span
-              style={{
-                fontSize: 12,
-                fontFamily: 'var(--font-inter), sans-serif',
-                color: '#8A9BA8',
-                maxWidth: 150,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                backgroundColor: 'rgba(138,155,168,0.12)',
-                padding: '3px 10px',
-                borderRadius: 20,
-              }}
-            >
-              {activeCompany?.name ?? '—'}
-            </span>
-          ) : (
-            <div ref={companySwitcherRef} style={{ position: 'relative' }}>
-              <button
-                onClick={() => setCompanySwitcherOpen(!companySwitcherOpen)}
+      {/* ── SEARCH ── */}
+      <div
+        style={{
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          paddingLeft: 16,
+          paddingRight: 16,
+          minWidth: 0,
+        }}
+      >
+        <NavSearch nav={nav} />
+      </div>
+
+      {/* ── RIGHT SECTION ── */}
+      <div style={{ display: 'flex', alignItems: 'center', paddingRight: 12, gap: 4, flexShrink: 0 }}>
+
+        {/* Company switcher */}
+        {mounted && (
+          <div ref={companySwitcherRef} style={{ position: 'relative', marginRight: 4 }}>
+            {ctxCompanies.length <= 1 ? (
+              <div
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 5,
+                  gap: 6,
                   fontSize: 12,
                   fontFamily: 'var(--font-inter), sans-serif',
-                  color: '#8A9BA8',
-                  backgroundColor: 'rgba(138,155,168,0.12)',
-                  border: 'none',
-                  borderRadius: 20,
-                  padding: '3px 10px',
-                  cursor: 'pointer',
-                  maxWidth: 160,
+                  color: 'rgba(255,255,255,0.55)',
+                  backgroundColor: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: 6,
+                  padding: '4px 10px',
                 }}
               >
-                <span
-                  style={{
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
+                <Building2 size={11} style={{ opacity: 0.6, flexShrink: 0 }} />
+                <span style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {activeCompany?.name ?? '—'}
                 </span>
-                <ChevronDown size={12} style={{ flexShrink: 0 }} />
-              </button>
-
-              {companySwitcherOpen && (
-                <div
+              </div>
+            ) : (
+              <>
+                <button
+                  className="cbop-nav-hover"
+                  onClick={() => setCompanySwitcherOpen(!companySwitcherOpen)}
                   style={{
-                    position: 'absolute',
-                    top: '100%',
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    marginTop: 4,
-                    backgroundColor: '#fff',
-                    border: '1px solid #D5DBDB',
-                    borderRadius: 8,
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                    zIndex: 100,
-                    minWidth: 168,
-                    overflow: 'hidden',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontSize: 12,
+                    fontFamily: 'var(--font-inter), sans-serif',
+                    color: 'rgba(255,255,255,0.75)',
+                    backgroundColor: 'rgba(255,255,255,0.06)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: 6,
+                    padding: '4px 10px',
+                    cursor: 'pointer',
+                    transition: 'background-color 0.1s',
                   }}
                 >
-                  {ctxCompanies.map((company) => (
-                    <button
-                      key={company.id}
-                      className="cbop-company-option"
-                      onClick={() => {
-                        setActiveCompany(company)
-                        setCompanySwitcherOpen(false)
-                      }}
+                  <Building2 size={11} style={{ opacity: 0.7, flexShrink: 0 }} />
+                  <span style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {activeCompany?.name ?? '—'}
+                  </span>
+                  <ChevronDown
+                    size={11}
+                    style={{
+                      flexShrink: 0,
+                      opacity: 0.5,
+                      transform: companySwitcherOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                      transition: 'transform 0.15s',
+                    }}
+                  />
+                </button>
+
+                {companySwitcherOpen && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 'calc(100% + 6px)',
+                      right: 0,
+                      backgroundColor: '#ffffff',
+                      border: '1px solid #E2E8F0',
+                      borderRadius: 8,
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.12), 0 1px 4px rgba(0,0,0,0.06)',
+                      zIndex: 100,
+                      minWidth: 200,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <div
                       style={{
-                        width: '100%',
-                        textAlign: 'left',
-                        padding: '8px 12px',
-                        fontSize: 13,
+                        padding: '8px 12px 6px',
+                        fontSize: 10,
+                        fontWeight: 600,
+                        letterSpacing: '0.06em',
+                        textTransform: 'uppercase',
+                        color: '#94A3B8',
                         fontFamily: 'var(--font-inter), sans-serif',
-                        color: activeCompany?.id === company.id ? '#0073BB' : '#1A2332',
-                        fontWeight: activeCompany?.id === company.id ? 500 : 400,
-                        backgroundColor: 'transparent',
-                        border: 'none',
-                        cursor: 'pointer',
-                        display: 'block',
                       }}
                     >
-                      {company.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+                      Switch company
+                    </div>
+                    {ctxCompanies.map((company) => {
+                      const isSelected = activeCompany?.id === company.id
+                      return (
+                        <button
+                          key={company.id}
+                          className={`cbop-company-opt${isSelected ? ' cbop-company-opt-active' : ''}`}
+                          onClick={() => { setActiveCompany(company); setCompanySwitcherOpen(false) }}
+                          style={{
+                            width: '100%',
+                            textAlign: 'left',
+                            padding: '8px 12px',
+                            fontSize: 13,
+                            fontFamily: 'var(--font-inter), sans-serif',
+                            color: isSelected ? '#0073BB' : '#1E293B',
+                            fontWeight: isSelected ? 600 : 400,
+                            backgroundColor: 'transparent',
+                            border: 'none',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                          }}
+                        >
+                          {isSelected && (
+                            <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#0073BB', flexShrink: 0 }} />
+                          )}
+                          {!isSelected && (
+                            <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#CBD5E1', flexShrink: 0 }} />
+                          )}
+                          {company.name}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
-      {/* RIGHT: Notification bell + Profile dropdown */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+        {/* Notification bell */}
         <NotificationBell />
 
+        {/* Profile dropdown */}
         <div ref={profileRef} style={{ position: 'relative' }}>
           <button
-            className="cbop-profile-btn"
+            className="cbop-nav-hover"
             onClick={() => setUserMenuOpen(!userMenuOpen)}
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: 7,
-              backgroundColor: 'rgba(255,255,255,0.05)',
-              border: 'none',
+              gap: 8,
+              backgroundColor: 'transparent',
+              border: '1px solid transparent',
               borderRadius: 6,
               padding: '4px 8px',
               cursor: 'pointer',
@@ -299,24 +304,50 @@ export function Topbar({ role, companies, name, email }: TopbarProps) {
                 fontFamily: 'var(--font-inter), sans-serif',
                 letterSpacing: '0.03em',
                 flexShrink: 0,
+                boxShadow: '0 0 0 2px rgba(255,255,255,0.12)',
               }}
             >
               {getInitials(name)}
             </div>
-            <span
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1, minWidth: 0 }}>
+              <span
+                style={{
+                  fontSize: 12,
+                  color: '#ffffff',
+                  fontFamily: 'var(--font-inter), sans-serif',
+                  fontWeight: 500,
+                  maxWidth: 100,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  lineHeight: 1.2,
+                }}
+              >
+                {name.split(' ')[0]}
+              </span>
+              <span
+                style={{
+                  fontSize: 10,
+                  color: AVATAR_BG[role] ?? 'rgba(255,255,255,0.45)',
+                  fontFamily: 'var(--font-inter), sans-serif',
+                  fontWeight: 600,
+                  letterSpacing: '0.05em',
+                  textTransform: 'uppercase',
+                  lineHeight: 1.2,
+                }}
+              >
+                {ROLE_LABEL[role] ?? role}
+              </span>
+            </div>
+            <ChevronDown
+              size={12}
               style={{
-                fontSize: 13,
-                color: '#ffffff',
-                fontFamily: 'var(--font-inter), sans-serif',
-                maxWidth: 120,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
+                color: 'rgba(255,255,255,0.35)',
+                flexShrink: 0,
+                transform: userMenuOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                transition: 'transform 0.15s',
               }}
-            >
-              {name}
-            </span>
-            <ChevronDown size={12} style={{ color: 'rgba(255,255,255,0.6)', flexShrink: 0 }} />
+            />
           </button>
 
           {userMenuOpen && (
@@ -324,62 +355,94 @@ export function Topbar({ role, companies, name, email }: TopbarProps) {
               style={{
                 position: 'absolute',
                 right: 0,
-                top: '100%',
-                marginTop: 4,
-                backgroundColor: '#fff',
-                border: '1px solid #D5DBDB',
-                borderRadius: 8,
-                boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+                top: 'calc(100% + 6px)',
+                backgroundColor: '#ffffff',
+                border: '1px solid #E2E8F0',
+                borderRadius: 10,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.06)',
                 zIndex: 100,
-                minWidth: 192,
+                minWidth: 208,
                 overflow: 'hidden',
               }}
             >
-              {/* Header: name, role badge, email — dark bg, no click */}
-              <div style={{ padding: '12px 14px', backgroundColor: '#232F3E' }}>
+              {/* Profile header */}
+              <div
+                style={{
+                  padding: '14px 16px 12px',
+                  background: 'linear-gradient(135deg, #1A2332 0%, #232F3E 100%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                }}
+              >
                 <div
                   style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: '50%',
+                    backgroundColor: AVATAR_BG[role] ?? '#5A6A74',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                     fontSize: 14,
                     fontWeight: 700,
                     color: '#fff',
                     fontFamily: 'var(--font-inter), sans-serif',
-                    marginBottom: 4,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                    boxShadow: '0 0 0 2px rgba(255,255,255,0.15)',
                   }}
                 >
-                  {name}
+                  {getInitials(name)}
                 </div>
-                <div style={{ marginBottom: 4 }}>
-                  <span
+                <div style={{ minWidth: 0 }}>
+                  <div
                     style={{
-                      fontSize: 10,
-                      fontWeight: 600,
-                      letterSpacing: '0.06em',
-                      textTransform: 'uppercase',
-                      color: AVATAR_BG[role] ?? '#8A9BA8',
+                      fontSize: 13,
+                      fontWeight: 700,
+                      color: '#fff',
                       fontFamily: 'var(--font-inter), sans-serif',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      marginBottom: 2,
                     }}
                   >
-                    {role.toUpperCase()}
-                  </span>
-                </div>
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: '#8A9BA8',
-                    fontFamily: 'var(--font-inter), sans-serif',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {email}
+                    {name}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 700,
+                        letterSpacing: '0.08em',
+                        textTransform: 'uppercase',
+                        color: '#fff',
+                        fontFamily: 'var(--font-inter), sans-serif',
+                        backgroundColor: AVATAR_BG[role] ?? '#5A6A74',
+                        padding: '2px 6px',
+                        borderRadius: 4,
+                      }}
+                    >
+                      {ROLE_LABEL[role] ?? role}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: 'rgba(255,255,255,0.45)',
+                      fontFamily: 'var(--font-inter), sans-serif',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      marginTop: 3,
+                    }}
+                  >
+                    {email}
+                  </div>
                 </div>
               </div>
 
-              <div style={{ height: 1, backgroundColor: '#D5DBDB' }} />
+              <div style={{ height: 1, backgroundColor: '#F1F5F9' }} />
 
               {/* Menu items */}
               <div style={{ padding: '4px 0' }}>
@@ -390,17 +453,17 @@ export function Topbar({ role, companies, name, email }: TopbarProps) {
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 9,
-                    padding: '8px 14px',
+                    gap: 10,
+                    padding: '9px 14px',
                     fontSize: 13,
                     fontFamily: 'var(--font-inter), sans-serif',
-                    color: '#1A2332',
+                    color: '#334155',
                     textDecoration: 'none',
                     transition: 'background-color 0.08s',
                   }}
                 >
-                  <User size={14} style={{ color: '#5A6A74', flexShrink: 0 }} />
-                  Profile
+                  <User size={14} style={{ color: '#94A3B8', flexShrink: 0 }} />
+                  My Profile
                 </Link>
                 <Link
                   href="/settings"
@@ -409,33 +472,32 @@ export function Topbar({ role, companies, name, email }: TopbarProps) {
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 9,
-                    padding: '8px 14px',
+                    gap: 10,
+                    padding: '9px 14px',
                     fontSize: 13,
                     fontFamily: 'var(--font-inter), sans-serif',
-                    color: '#1A2332',
+                    color: '#334155',
                     textDecoration: 'none',
                     transition: 'background-color 0.08s',
                   }}
                 >
-                  <Settings size={14} style={{ color: '#5A6A74', flexShrink: 0 }} />
+                  <Settings size={14} style={{ color: '#94A3B8', flexShrink: 0 }} />
                   Settings
                 </Link>
               </div>
 
-              <div style={{ height: 1, backgroundColor: '#D5DBDB' }} />
+              <div style={{ height: 1, backgroundColor: '#F1F5F9' }} />
 
-              {/* Sign out */}
               <div style={{ padding: '4px 0' }}>
                 <button
                   onClick={handleLogout}
-                  className="cbop-menu-item"
+                  className="cbop-signout"
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 9,
+                    gap: 10,
                     width: '100%',
-                    padding: '8px 14px',
+                    padding: '9px 14px',
                     fontSize: 13,
                     fontFamily: 'var(--font-inter), sans-serif',
                     color: '#D13212',

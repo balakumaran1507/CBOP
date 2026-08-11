@@ -57,6 +57,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           companies={user.companies ?? []}
           name={user.name ?? ''}
           email={user.email ?? ''}
+          nav={user.nav ?? []}
         />
         <div className="flex flex-1" style={{ minHeight: 0 }}>
           {/* Nav comes from the module registry via /api/session — see IF-5 */}

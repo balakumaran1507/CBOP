@@ -22,9 +22,13 @@ export async function GET(
   req: NextRequest,
   { params }: { params: { path: string[] } }
 ) {
-  const session = await auth.api.getSession({ headers: req.headers })
-  if (!session?.user) {
-    return new NextResponse('Unauthorized', { status: 401 })
+  // Allow public access to user avatars since they are displayed on the lockscreen before login
+  const isPublic = params.path[0] === 'avatars'
+  if (!isPublic) {
+    const session = await auth.api.getSession({ headers: req.headers })
+    if (!session?.user) {
+      return new NextResponse('Unauthorized', { status: 401 })
+    }
   }
 
   const rel  = params.path.map(p => path.basename(p)).join('/')

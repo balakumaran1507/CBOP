@@ -63,7 +63,10 @@ async function seed() {
       // Create via better-auth sign-up endpoint
       const signupRes = await fetch(`${baseURL}/api/auth/sign-up/email`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': baseURL
+        },
         body: JSON.stringify({ email: u.email, password: u.password, name: u.name }),
       })
 

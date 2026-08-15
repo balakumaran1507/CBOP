@@ -1,6 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { Camera } from 'lucide-react'
+import { ImageEditorModal } from '@/app/components/image-editor-modal'
+import { getAvatarStyle } from '@/app/lib/avatar-position'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -14,6 +17,7 @@ interface SessionData {
   telegramChatId: string | null
   companyIds: string[]
   companies: Array<{ id: string; name: string; invoice_prefix: string }>
+  avatarUrl: string | null
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -146,10 +150,13 @@ export default function ProfilePage() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const dismissToast = () => setToast(null)
 
-  // Name edit
+  // Profile details
   const [nameValue, setNameValue] = useState('')
   const [nameSaving, setNameSaving] = useState(false)
   const [nameError, setNameError] = useState('')
+
+  // Avatar editor
+  const [isImageEditorOpen, setIsImageEditorOpen] = useState(false)
 
   // Password
   const [currentPw, setCurrentPw] = useState('')
@@ -396,6 +403,7 @@ export default function ProfilePage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
               {/* Avatar */}
               <div
+                className="group"
                 style={{
                   width: 56,
                   height: 56,
@@ -411,10 +419,61 @@ export default function ProfilePage() {
                   color: '#fff',
                   letterSpacing: '0.02em',
                   userSelect: 'none',
+                  position: 'relative',
+                  overflow: 'hidden',
+                  cursor: 'pointer',
                 }}
+                onClick={() => setIsImageEditorOpen(true)}
               >
-                {initials}
+                {session.avatarUrl ? (
+                  <img src={session.avatarUrl} alt={session.name} style={{ width: '100%', height: '100%', objectFit: 'cover', ...getAvatarStyle(session.email) }} />
+                ) : (
+                  initials
+                )}
+                
+                {/* Hover overlay with camera icon */}
+                <div style={{
+                  position: 'absolute',
+                  inset: 0,
+                  backgroundColor: 'rgba(0,0,0,0.5)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  opacity: 0,
+                  transition: 'opacity 0.2s',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
+                onMouseLeave={(e) => (e.currentTarget.style.opacity = '0')}
+                >
+                  <Camera size={20} color="#fff" />
+                </div>
               </div>
+
+              <ImageEditorModal
+                isOpen={isImageEditorOpen}
+                onClose={() => setIsImageEditorOpen(false)}
+                title="Update Profile Photo"
+                aspect={1}
+                onSave={async (file) => {
+                  try {
+                    const formData = new FormData()
+                    formData.append('file', file)
+                    const res = await fetch('/api/uploads/avatar', {
+                      method: 'POST',
+                      body: formData,
+                    })
+                    if (!res.ok) throw new Error('Upload failed')
+                    const data = await res.json()
+                    if (data.url) {
+                      setSession((prev) => prev ? { ...prev, avatarUrl: data.url } : prev)
+                      setToast({ message: 'Avatar updated successfully', type: 'success' })
+                    }
+                  } catch (err) {
+                    setToast({ message: 'Failed to upload avatar', type: 'error' })
+                  }
+                  setIsImageEditorOpen(false)
+                }}
+              />
 
               {/* Name / Email / Role */}
               <div style={{ flex: 1, minWidth: 0 }}>

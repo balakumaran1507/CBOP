@@ -3,23 +3,16 @@ import { Suspense, useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { authClient } from '@/app/lib/auth-client'
 import { getAvatarStyle } from '@/app/lib/avatar-position'
+import { useLockscreen } from '@/app/lib/use-lockscreen'
 
 const ALLOWED_REDIRECT_ORIGINS = [
   'https://cbop.etherence.com',
   'https://accounting.etherence.com',
 ]
 
-const ROLE_LABEL: Record<string, string> = {
-  creator: 'Creator',
-  ceo: 'CEO',
-  coo: 'COO',
-  cto: 'CTO',
-}
-
 interface UserProfile {
   name: string
   email: string
-  role: string
   avatarUrl: string | null
 }
 
@@ -56,51 +49,35 @@ function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const redirectTarget = resolveRedirect(searchParams.get('redirect'))
-  
+
+  const {
+    time,
+    isUnlocked,
+    setIsUnlocked,
+    isDragging,
+    dragOffset,
+    handlePointerDown,
+    handlePointerMove,
+    handlePointerUp,
+    getLockscreenStyle,
+  } = useLockscreen()
+
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [checkingSession, setCheckingSession] = useState(true)
-  
-  // Custom OS UX states
-  const [isUnlocked, setIsUnlocked] = useState(false)
+
   const [loginMode, setLoginMode] = useState<'select' | 'profile-password' | 'manual'>('select')
   const [selectedUser, setSelectedUser] = useState<(UserProfile & { initials: string }) | null>(null)
   const [showPassword, setShowPassword] = useState(false)
   const [profiles, setProfiles] = useState<UserProfile[]>([])
   const [stats, setStats] = useState<LockscreenStats | null>(null)
-  
-  const [time, setTime] = useState({
-    timeStr: '00:00:00',
-    dateStr: '01.01',
-    dayOfWeek: 'MONDAY',
-  })
 
-  // Clock effect
+  // Reset showPassword whenever screen locks again
   useEffect(() => {
-    const updateClock = () => {
-      const now = new Date()
-      const hh = String(now.getHours()).padStart(2, '0')
-      const mm = String(now.getMinutes()).padStart(2, '0')
-      const ss = String(now.getSeconds()).padStart(2, '0')
-      const day = String(now.getDate()).padStart(2, '0')
-      const month = String(now.getMonth() + 1).padStart(2, '0')
-      
-      const days = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY']
-      const dayName = days[now.getDay()]
-
-      setTime({
-        timeStr: `${hh}:${mm}:${ss}`,
-        dateStr: `${day}.${month}`,
-        dayOfWeek: dayName,
-      })
-    }
-
-    updateClock()
-    const interval = setInterval(updateClock, 1000)
-    return () => clearInterval(interval)
-  }, [])
+    if (!isUnlocked) setShowPassword(false)
+  }, [isUnlocked])
 
   // Auto-login / session check
   useEffect(() => {
@@ -117,28 +94,11 @@ function LoginForm() {
     }).catch(() => setCheckingSession(false))
   }, [redirectTarget, router])
 
-  // Fetch lockscreen statistics and user profiles
+  // Fetch profiles and lockscreen stats — order comes from DB display_order column
   useEffect(() => {
     fetch('/api/public/profiles')
       .then((r) => r.json())
-      .then((data) => {
-        if (data?.profiles) {
-          // Custom priority order for key team members and founders
-          const ORDER_PRIORITY: Record<string, number> = {
-            'founders@cybercomctf.com': 1,    // Balakumaran
-            'nabeelahanjum.wrk@gmail.com': 2, // Nabeelah
-            'guru2006may@gmail.com': 3,       // Guru
-            'jaie@cybercomctf.com': 4,        // Jaie Balaji
-          }
-          const sorted = [...data.profiles].sort((a, b) => {
-            const pA = ORDER_PRIORITY[a.email] ?? 99
-            const pB = ORDER_PRIORITY[b.email] ?? 99
-            if (pA !== pB) return pA - pB
-            return a.name.localeCompare(b.name)
-          })
-          setProfiles(sorted)
-        }
-      })
+      .then((data) => { if (data?.profiles) setProfiles(data.profiles) })
       .catch((err) => console.error('[profiles] load failed:', err))
 
     fetch('/api/public/lockscreen-stats')
@@ -146,91 +106,6 @@ function LoginForm() {
       .then((data) => setStats(data))
       .catch((err) => console.error('[stats] load failed:', err))
   }, [])
-
-  // Drag-to-unlock and drag-to-lock states
-  const [isDragging, setIsDragging] = useState(false)
-  const [startY, setStartY] = useState(0)
-  const [dragOffset, setDragOffset] = useState(0)
-
-  const handlePointerDown = (e: React.PointerEvent) => {
-    const target = e.target as HTMLElement
-    if (target.closest('button') || target.closest('input') || target.closest('a')) {
-      return
-    }
-    e.currentTarget.setPointerCapture(e.pointerId)
-    setIsDragging(true)
-    setStartY(e.clientY)
-    setDragOffset(0)
-  }
-
-  const handlePointerMove = (e: React.PointerEvent) => {
-    if (!isDragging) return
-    const deltaY = e.clientY - startY
-    if (!isUnlocked) {
-      // Locked: dragging UP (negative deltaY)
-      setDragOffset(Math.min(0, deltaY))
-    } else {
-      // Unlocked: dragging DOWN (positive deltaY)
-      setDragOffset(Math.max(0, deltaY))
-    }
-  }
-
-  const handlePointerUp = (e: React.PointerEvent) => {
-    if (!isDragging) return
-    e.currentTarget.releasePointerCapture(e.pointerId)
-    setIsDragging(false)
-
-    const threshold = 100 // Drag threshold in px
-    const deltaY = e.clientY - startY
-
-    if (!isUnlocked) {
-      if (-deltaY > threshold) {
-        setIsUnlocked(true)
-      }
-    } else {
-      if (deltaY > threshold) {
-        setIsUnlocked(false)
-        setShowPassword(false)
-      }
-    }
-    setDragOffset(0)
-  }
-
-  // Keydown to unlock fallback (Spacebar, Enter)
-  useEffect(() => {
-    if (isUnlocked) return
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space') {
-        e.preventDefault()
-        setIsUnlocked(true)
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [isUnlocked])
-
-  const getLockscreenStyle = (): React.CSSProperties => {
-    const baseStyle: React.CSSProperties = {
-      cursor: isDragging ? 'grabbing' : 'grab',
-    }
-    if (!isUnlocked) {
-      return {
-        ...baseStyle,
-        transform: `translateY(${dragOffset}px)`,
-        transition: isDragging ? 'none' : 'transform 0.5s cubic-bezier(0.16, 1, 0.3, 1)',
-      }
-    } else {
-      return {
-        ...baseStyle,
-        transform: isDragging 
-          ? `translateY(calc(-100% + ${dragOffset}px))` 
-          : 'translateY(-100%)',
-        transition: isDragging ? 'none' : 'transform 0.5s cubic-bezier(0.16, 1, 0.3, 1)',
-      }
-    }
-  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -283,45 +158,42 @@ function LoginForm() {
   }
 
   return (
-    <div 
+    <div
       className="relative min-h-screen w-screen overflow-hidden bg-black font-sans select-none"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
     >
-      
+
       {/* 1. LOCK SCREEN LAYER */}
-      <div 
+      <div
         className={`absolute inset-0 z-50 bg-cover bg-center flex flex-col justify-between p-8 md:p-16 select-none ${
           isUnlocked && !isDragging ? 'pointer-events-none' : ''
         }`}
-        style={{ 
+        style={{
           backgroundImage: `url('/CBOP-lock-screen.png')`,
           ...getLockscreenStyle()
         }}
       >
-        {/* Subtle scanline and grid overlay to feel like HUD */}
-        <div 
-          className="absolute inset-0 pointer-events-none opacity-20 z-10" 
-          style={{ 
-            backgroundImage: 'linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06))', 
-            backgroundSize: '100% 4px, 6px 100%' 
-          }} 
+        {/* Scanline overlay */}
+        <div
+          className="absolute inset-0 pointer-events-none opacity-20 z-10"
+          style={{
+            backgroundImage: 'linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06))',
+            backgroundSize: '100% 4px, 6px 100%'
+          }}
         />
         <div className="absolute inset-0 bg-black/10 z-0" />
 
-        {/* Lock Screen Header: Custom Sturmanskie-inspired wing SVG */}
+        {/* Lock Screen Header */}
         <div className="relative z-20 w-full flex justify-between items-start">
           <div className="flex items-center space-x-3 bg-black/20 backdrop-blur-sm p-3 border border-white/10">
             <svg className="w-10 h-10 text-white/80" viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="1.5">
-              {/* Wings */}
               <path d="M12 28 C 22 28, 28 20, 32 32 C 36 20, 42 28, 52 28" strokeLinecap="round" />
               <path d="M8 32 C 20 32, 26 24, 32 36 C 38 24, 44 32, 56 32" strokeLinecap="round" opacity="0.5" />
               <path d="M16 24 C 24 24, 28 18, 32 28 C 36 18, 40 24, 48 24" strokeLinecap="round" opacity="0.7" />
-              {/* Central Target/Globe */}
               <circle cx="32" cy="30" r="6" strokeWidth="2" />
               <circle cx="32" cy="30" r="1.5" fill="currentColor" />
-              {/* Crosshairs */}
               <line x1="32" y1="18" x2="32" y2="24" />
               <line x1="32" y1="36" x2="32" y2="42" />
               <line x1="20" y1="30" x2="26" y2="30" />
@@ -333,7 +205,6 @@ function LoginForm() {
             </div>
           </div>
 
-          {/* Top Right Mini Indicators */}
           <div className="font-mono text-[9px] text-white/50 tracking-widest text-right bg-black/20 backdrop-blur-sm p-3 border border-white/10 space-y-1">
             <div>SYSTEM ENGINE: <span className="text-white/80 uppercase">ETHERENE CORE CLOUD</span></div>
             <div>NODE GATEWAY: <span className="text-blue-400 font-bold">AWS-AP-SOUTH-1 // SECURE</span></div>
@@ -341,14 +212,12 @@ function LoginForm() {
           </div>
         </div>
 
-        {/* Lock Screen Middle Section: Main HUD Text & Date */}
+        {/* Lock Screen Middle */}
         <div className="relative z-20 w-full grid grid-cols-1 md:grid-cols-3 gap-8 items-end">
-          {/* Main Title Stack */}
           <div className="md:col-span-2 text-left">
             <div className="text-white/40 font-mono text-xs tracking-[0.4em] uppercase mb-5">
               SYSTEMS READY // UNLOCK AVAILABLE
             </div>
-            {/* Header font changed from Syne to Space Grotesk (font-sans) */}
             <h1 className="text-white text-4xl md:text-6xl font-bold tracking-[0.18em] uppercase font-sans leading-[1.15] mb-4">
               CBOP.FIRST<br />
               BUSINESS SUPER OS
@@ -360,7 +229,6 @@ function LoginForm() {
             </div>
           </div>
 
-          {/* Right HUD Panel parameters (Live business statistics for Founders/C-Suite) */}
           <div className="hidden md:flex flex-col space-y-3.5 font-mono text-[10px] text-white/50 tracking-wider bg-black/35 backdrop-blur-md p-5 border border-white/10 rounded-none text-left z-20 w-80">
             <div className="text-white/30 text-[9px] uppercase tracking-widest pb-1 border-b border-white/10 mb-2">
               // BUSINESS OPERATIONS
@@ -376,7 +244,7 @@ function LoginForm() {
             <div>
               <span className="text-white/20">n8n_AUTOMATION_STACK // </span>
               <span className={stats?.n8nStatus === 'ONLINE' ? 'text-green-400 font-bold' : 'text-white/40'}>
-                {stats ? `${stats.n8nStatus} (11 RUNNING)` : 'CHECKING...'}
+                {stats ? stats.n8nStatus : 'CHECKING...'}
               </span>
             </div>
             <div>
@@ -386,26 +254,22 @@ function LoginForm() {
           </div>
         </div>
 
-        {/* Lock Screen Bottom Section: Clock, Pulse unlock hint, and Giant semi-transparent year */}
+        {/* Lock Screen Bottom */}
         <div className="relative z-20 w-full flex flex-col md:flex-row justify-between items-end pt-8 md:pt-0">
-          
-          {/* Pulse Unlock Hint & Etherene Branding */}
           <div className="flex flex-col space-y-1 w-full md:w-auto text-center md:text-left mb-4 md:mb-0">
             <div className="text-white/40 font-mono text-[10px] tracking-[0.3em] uppercase animate-pulse">
-              // PRESS ANY KEY OR CLICK TO ENTER SYSTEM
+              // PRESS SPACEBAR OR DRAG UP TO ENTER SYSTEM
             </div>
             <div className="text-white/20 font-mono text-[8px] tracking-[0.2em] uppercase select-none">
               SYSTEM ENGINE: <span className="text-white/45">ETHERENE DEPLOYMENT // CORE_V2.0</span>
             </div>
           </div>
 
-          {/* Dynamic Clock (Bottom Right) */}
           <div className="text-white font-mono font-bold tracking-widest text-right z-20">
             <span className="text-4xl md:text-6xl tracking-tighter">{time.timeStr.slice(0, 5)}</span>
             <span className="text-xl md:text-2xl text-white/40 ml-1">{time.timeStr.slice(5)}</span>
           </div>
 
-          {/* Giant Background Number "26" (Faithful to the Russian space watch "61" aesthetic) */}
           <div className="absolute bottom-[-60px] left-[15%] md:left-[35%] text-[24vw] font-bold text-white/[0.04] font-mono select-none pointer-events-none tracking-tighter leading-none z-0">
             26
           </div>
@@ -415,21 +279,18 @@ function LoginForm() {
       {/* 2. LOGIN SCREEN BASE LAYER */}
       <div className="absolute inset-0 z-0 bg-cover bg-center filter blur-md scale-105" style={{ backgroundImage: `url('/CBOP-lock-screen.png')` }} />
       <div className="absolute inset-0 z-10 bg-black/60 backdrop-blur-[2px]" />
-      
-      {/* HUD overlay on base layer too for continuity */}
-      <div 
-        className="absolute inset-0 pointer-events-none opacity-10 z-20" 
-        style={{ 
-          backgroundImage: 'linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06))', 
-          backgroundSize: '100% 4px, 6px 100%' 
-        }} 
+
+      <div
+        className="absolute inset-0 pointer-events-none opacity-10 z-20"
+        style={{
+          backgroundImage: 'linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06))',
+          backgroundSize: '100% 4px, 6px 100%'
+        }}
       />
 
       {/* Central Login Container */}
-      <div 
-        className="relative z-30 min-h-screen flex flex-col items-center justify-center p-4"
-      >
-        
+      <div className="relative z-30 min-h-screen flex flex-col items-center justify-center p-4">
+
         {/* CBOP logo/header */}
         <div className="mb-10 text-center cursor-default" onClick={(e) => e.stopPropagation()}>
           <div className="inline-flex items-center space-x-2 text-white/90 mb-3">
@@ -444,14 +305,13 @@ function LoginForm() {
           </p>
         </div>
 
-        {/* 2A. PROFILE SELECTOR VIEW (With centered wrap layout) */}
+        {/* 2A. PROFILE SELECTOR VIEW */}
         {loginMode === 'select' && (
           <div className="w-full max-w-4xl text-center animate-fadeIn cursor-default" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
             <h2 className="text-white/80 font-mono text-xs tracking-[0.3em] uppercase mb-8">
               // SELECT CONSOLE ACCOUNT
             </h2>
-            
-            {/* Centered wrap layout to avoid flex justify-center clipping bugs */}
+
             <div className="flex flex-wrap items-center justify-center gap-5 mb-8 px-4">
               {profiles.map((p) => {
                 const initials = p.name.split(' ').map(n => n[0] ?? '').join('').substring(0, 2).toUpperCase()
@@ -464,16 +324,14 @@ function LoginForm() {
                     }}
                     className="w-40 sm:w-44 group relative flex flex-col items-center bg-black/40 hover:bg-white/10 backdrop-blur-md border border-white/10 hover:border-white/30 transition-all duration-300 p-6 text-center select-none active:scale-[0.98] shadow-lg hover:shadow-xl"
                   >
-                    {/* Subtle top blue glow bar */}
                     <div className="absolute top-0 inset-x-0 h-[2px] bg-white/0 group-hover:bg-blue-500 transition-all duration-300" />
-                    
-                    {/* Circular avatar */}
+
                     <div className="w-20 h-20 rounded-full bg-white/10 border border-white/20 flex items-center justify-center mb-4 group-hover:scale-105 transition-transform duration-300 overflow-hidden relative shadow-md">
                       {p.avatarUrl ? (
-                        <img 
-                          src={p.avatarUrl} 
-                          alt={p.name} 
-                          className="w-full h-full object-cover" 
+                        <img
+                          src={p.avatarUrl}
+                          alt={p.name}
+                          className="w-full h-full object-cover"
                           style={getAvatarStyle(p.email)}
                         />
                       ) : (
@@ -482,13 +340,9 @@ function LoginForm() {
                         </span>
                       )}
                     </div>
-                    
-                    {/* User name & role */}
+
                     <span className="text-white font-bold text-[14px] tracking-wide mb-1 truncate max-w-full group-hover:text-blue-400 transition-colors">
                       {p.name}
-                    </span>
-                    <span className="text-white/40 font-mono text-[9px] uppercase tracking-widest truncate max-w-full">
-                      {ROLE_LABEL[p.role] ?? p.role.toUpperCase()}
                     </span>
                   </button>
                 )
@@ -513,17 +367,15 @@ function LoginForm() {
         {/* 2B. PROFILE PASSWORD VIEW */}
         {loginMode === 'profile-password' && selectedUser && (
           <div className="w-full max-w-[380px] bg-white/5 backdrop-blur-xl border border-white/10 p-8 shadow-2xl relative animate-fadeIn cursor-default" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-            {/* Top decorative accent bar */}
             <div className="absolute top-0 inset-x-0 h-[2px] bg-white/30" />
-            
-            {/* User display */}
+
             <div className="flex flex-col items-center mb-8">
               <div className="w-20 h-20 rounded-full bg-white/10 border border-white/20 flex items-center justify-center mb-4 overflow-hidden relative shadow-md">
                 {selectedUser.avatarUrl ? (
-                  <img 
-                    src={selectedUser.avatarUrl} 
-                    alt={selectedUser.name} 
-                    className="w-full h-full object-cover" 
+                  <img
+                    src={selectedUser.avatarUrl}
+                    alt={selectedUser.name}
+                    className="w-full h-full object-cover"
                     style={getAvatarStyle(selectedUser.email)}
                   />
                 ) : (
@@ -533,14 +385,11 @@ function LoginForm() {
                 )}
               </div>
               <h2 className="text-white font-bold text-lg tracking-wide">{selectedUser.name}</h2>
-              <p className="text-white/40 font-mono text-xs uppercase tracking-widest mt-1">
-                {ROLE_LABEL[selectedUser.role] ?? selectedUser.role.toUpperCase()}
-              </p>
             </div>
 
             {error && (
-              <div className="mb-6 p-4 bg-red-955/40 border border-red-500/30 text-red-300 text-[13px] font-mono flex items-start">
-                <svg className="w-4 h-4 mr-2 shrink-0 text-red-400 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="mb-6 p-4 bg-red-950/40 border border-red-500/30 text-white text-[13px] font-mono flex items-start">
+                <svg className="w-4 h-4 mr-2 shrink-0 text-white/70 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 <span>{error}</span>
@@ -628,7 +477,6 @@ function LoginForm() {
         {/* 2C. MANUAL LOGIN VIEW */}
         {loginMode === 'manual' && (
           <div className="w-full max-w-[380px] bg-white/5 backdrop-blur-xl border border-white/10 p-8 shadow-2xl relative animate-fadeIn cursor-default" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-            {/* Top decorative accent bar */}
             <div className="absolute top-0 inset-x-0 h-[2px] bg-white/30" />
 
             <div className="text-center mb-8 text-left">
@@ -641,8 +489,8 @@ function LoginForm() {
             </div>
 
             {error && (
-              <div className="mb-6 p-4 bg-red-955/40 border border-red-500/30 text-red-300 text-[13px] font-mono flex items-start">
-                <svg className="w-4 h-4 mr-2 shrink-0 text-red-400 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="mb-6 p-4 bg-red-950/40 border border-red-500/30 text-white text-[13px] font-mono flex items-start">
+                <svg className="w-4 h-4 mr-2 shrink-0 text-white/70 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 <span>{error}</span>
@@ -741,7 +589,7 @@ function LoginForm() {
             </div>
           </div>
         )}
-        {/* Subtle Etherene branding footer */}
+
         <div className="mt-12 text-center cursor-default opacity-40 hover:opacity-75 transition-opacity" onClick={(e) => e.stopPropagation()}>
           <span className="text-white/25 font-mono text-[9px] uppercase tracking-[0.35em] select-none">
             ENGINE BY <span className="text-white/50 font-bold">ETHERENE</span>

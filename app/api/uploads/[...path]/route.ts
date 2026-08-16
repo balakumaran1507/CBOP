@@ -31,11 +31,11 @@ export async function GET(
     }
   }
 
-  const rel  = params.path.map(p => path.basename(p)).join('/')
-  const file = path.join(UPLOADS_DIR, rel)
+  // path.resolve normalises '..' before the guard runs
+  const file = path.resolve(UPLOADS_DIR, params.path.join('/'))
 
-  // Prevent path traversal
-  if (!file.startsWith(UPLOADS_DIR)) {
+  // Trailing sep prevents prefix-spoofing (e.g. /uploads-evil starts with /uploads)
+  if (!file.startsWith(UPLOADS_DIR + path.sep)) {
     return new NextResponse('Not found', { status: 404 })
   }
 
@@ -45,7 +45,7 @@ export async function GET(
 
   const ext         = path.extname(file).toLowerCase()
   const contentType = MIME[ext] ?? 'application/octet-stream'
-  const data        = fs.readFileSync(file)
+  const data        = await fs.promises.readFile(file)
 
   return new NextResponse(data, {
     status: 200,

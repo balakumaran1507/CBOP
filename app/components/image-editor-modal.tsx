@@ -35,6 +35,22 @@ export function ImageEditorModal({
     }
   }, [isOpen, imageSrc])
 
+  // Wheel zoom — must be a non-passive native listener so preventDefault() works
+  const scaleRef = useRef(scale)
+  scaleRef.current = scale
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el || !isOpen) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const newScale = Math.min(Math.max(scaleRef.current - e.deltaY * 0.05 * 0.01, 1), 4)
+      setScale(newScale)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [isOpen])
+
   if (!isOpen || !imageSrc) return null
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -58,13 +74,6 @@ export function ImageEditorModal({
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     e.currentTarget.releasePointerCapture(e.pointerId)
     setIsDragging(false)
-  }
-
-  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    const zoomSpeed = 0.05
-    const newScale = Math.min(Math.max(scale - e.deltaY * zoomSpeed * 0.01, 1), 4)
-    setScale(newScale)
   }
 
   const handleApply = () => {
@@ -146,7 +155,6 @@ export function ImageEditorModal({
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
-          onWheel={handleWheel}
         >
           {/* Image behind overlay */}
           <img 

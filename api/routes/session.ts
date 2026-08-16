@@ -58,9 +58,16 @@ app.patch('/api/session/profile', requireAuth, async (c) => {
     return c.json({ error: 'Name must be at least 2 characters' }, 400)
   }
   const userId = c.get('userId')
-  await query(`UPDATE users SET name = $1, updated_at = NOW() WHERE id = $2`, [name.trim(), userId])
+  await query(`UPDATE users SET name = $1 WHERE id = $2`, [name.trim(), userId])
   return c.json({ ok: true })
 })
+
+const AVATAR_MIME_TO_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png':  'png',
+  'image/webp': 'webp',
+}
+const AVATAR_MAX_BYTES = 5 * 1024 * 1024 // 5 MB
 
 app.post('/api/session/avatar', requireAuth, async (c) => {
   try {
@@ -68,25 +75,23 @@ app.post('/api/session/avatar', requireAuth, async (c) => {
     const file = formData.get('file') as File | null
     if (!file) return c.json({ error: 'No file provided' }, 400)
 
-    const allowed = ['image/jpeg', 'image/png', 'image/webp']
-    if (!allowed.includes(file.type)) {
-      return c.json({ error: 'Only JPEG, PNG, and WebP images are allowed' }, 400)
-    }
+    // Derive extension from validated MIME — never from filename (XSS vector)
+    const ext = AVATAR_MIME_TO_EXT[file.type]
+    if (!ext) return c.json({ error: 'Only JPEG, PNG, and WebP images are allowed' }, 400)
+
+    if (file.size > AVATAR_MAX_BYTES) return c.json({ error: 'File must be under 5 MB' }, 400)
 
     const userId = c.get('userId')
-    const ext = file.name.split('.').pop()?.toLowerCase() ?? 'png'
+    // Deterministic filename per user — uploading again overwrites, no orphan files
     const fname = `user-${userId}.${ext}`
     const dir = path.join(process.cwd(), 'uploads', 'avatars')
-    
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true })
-    }
 
+    await fs.promises.mkdir(dir, { recursive: true })
     const buf = Buffer.from(await file.arrayBuffer())
-    fs.writeFileSync(path.join(dir, fname), buf)
+    await fs.promises.writeFile(path.join(dir, fname), buf)
 
     const avatarUrl = `/api/uploads/avatars/${fname}`
-    await query(`UPDATE users SET avatar_url = $1, updated_at = NOW() WHERE id = $2`, [avatarUrl, userId])
+    await query(`UPDATE users SET avatar_url = $1 WHERE id = $2`, [avatarUrl, userId])
 
     return c.json({ avatar_url: avatarUrl })
   } catch (err: any) {
@@ -135,10 +140,15 @@ app.get('/api/public/lockscreen-stats', async (c) => {
 })
 
 // ── GET /api/public/profiles (Public) ─────────────────────────────────────────
+// Returns only name, email, avatarUrl — no role (role exposure is a security risk on a public endpoint).
+// Sorted by display_order set in migration 066.
 app.get('/api/public/profiles', async (c) => {
   try {
     const result = await query(
-      `SELECT name, email, role, avatar_url AS "avatarUrl" FROM users WHERE is_active = true ORDER BY name`
+      `SELECT name, email, avatar_url AS "avatarUrl"
+       FROM users
+       WHERE is_active = true
+       ORDER BY display_order NULLS LAST, name`
     )
     return c.json({ profiles: result.rows })
   } catch (err: any) {

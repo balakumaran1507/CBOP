@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { Camera } from 'lucide-react'
 import { ImageEditorModal } from '@/app/components/image-editor-modal'
 import { getAvatarStyle } from '@/app/lib/avatar-position'
@@ -157,6 +157,20 @@ export default function ProfilePage() {
 
   // Avatar editor
   const [isImageEditorOpen, setIsImageEditorOpen] = useState(false)
+  const [avatarSrc, setAvatarSrc] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleAvatarClick = () => fileInputRef.current?.click()
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const url = URL.createObjectURL(file)
+    setAvatarSrc(url)
+    setIsImageEditorOpen(true)
+    // Reset input so picking the same file again still fires onChange
+    e.target.value = ''
+  }
 
   // Password
   const [currentPw, setCurrentPw] = useState('')
@@ -423,7 +437,7 @@ export default function ProfilePage() {
                   overflow: 'hidden',
                   cursor: 'pointer',
                 }}
-                onClick={() => setIsImageEditorOpen(true)}
+                onClick={handleAvatarClick}
               >
                 {session.avatarUrl ? (
                   <img src={session.avatarUrl} alt={session.name} style={{ width: '100%', height: '100%', objectFit: 'cover', ...getAvatarStyle(session.email) }} />
@@ -431,47 +445,55 @@ export default function ProfilePage() {
                   initials
                 )}
                 
-                {/* Hover overlay with camera icon */}
-                <div style={{
+                {/* Hover overlay with camera icon — opacity driven by parent :hover via className */}
+                <div className="avatar-camera-overlay" style={{
                   position: 'absolute',
                   inset: 0,
                   backgroundColor: 'rgba(0,0,0,0.5)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  opacity: 0,
-                  transition: 'opacity 0.2s',
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
-                onMouseLeave={(e) => (e.currentTarget.style.opacity = '0')}
-                >
+                }}>
                   <Camera size={20} color="#fff" />
                 </div>
               </div>
 
+              {/* Hidden file input — triggered by clicking the avatar */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                style={{ display: 'none' }}
+                onChange={handleFileChange}
+              />
+
               <ImageEditorModal
                 isOpen={isImageEditorOpen}
-                onClose={() => setIsImageEditorOpen(false)}
+                imageSrc={avatarSrc ?? ''}
+                onClose={() => { setIsImageEditorOpen(false); setAvatarSrc(null) }}
                 title="Update Profile Photo"
-                aspect={1}
-                onSave={async (file) => {
+                cropShape="circle"
+                onSave={async (blob) => {
                   try {
                     const formData = new FormData()
-                    formData.append('file', file)
-                    const res = await fetch('/api/uploads/avatar', {
+                    // Wrap Blob in File so the server gets a filename (needed for MIME validation)
+                    formData.append('file', new File([blob], 'avatar.jpg', { type: blob.type }))
+                    const res = await fetch('/api/session/avatar', {
                       method: 'POST',
                       body: formData,
                     })
                     if (!res.ok) throw new Error('Upload failed')
                     const data = await res.json()
-                    if (data.url) {
-                      setSession((prev) => prev ? { ...prev, avatarUrl: data.url } : prev)
+                    if (data.avatar_url) {
+                      setSession((prev) => prev ? { ...prev, avatarUrl: data.avatar_url } : prev)
                       setToast({ message: 'Avatar updated successfully', type: 'success' })
                     }
                   } catch (err) {
                     setToast({ message: 'Failed to upload avatar', type: 'error' })
                   }
                   setIsImageEditorOpen(false)
+                  if (avatarSrc) URL.revokeObjectURL(avatarSrc)
+                  setAvatarSrc(null)
                 }}
               />
 

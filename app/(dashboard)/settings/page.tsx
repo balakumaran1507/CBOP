@@ -3,7 +3,9 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Info, X, CheckCircle2 } from 'lucide-react'
+import { Info, X, CheckCircle2, Calendar, Users, Send, FileText, ChevronRight } from 'lucide-react'
+import Link from 'next/link'
+import { BriefingDialog } from '@/app/components/briefing-dialog'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -3003,6 +3005,42 @@ const ACTION_COLORS: Record<ActionType, string> = {
   notify_team:          '#8B5CF6',
 }
 
+// ── Morning Briefing Config Block ─────────────────────────────────────────────
+
+function MorningBriefingConfig() {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <BriefingDialog open={open} onClose={() => setOpen(false)} />
+      <div style={{ border: '1px solid #D5DBDB', borderRadius: 8, overflow: 'hidden', marginBottom: 28 }}>
+        <div style={{ padding: '14px 16px', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <p style={{ fontSize: 14, fontWeight: 700, color: '#1E293B', margin: 0, fontFamily: 'var(--font-inter)' }}>Morning Briefing</p>
+            <p style={{ fontSize: 12, color: '#64748B', margin: '2px 0 0', fontFamily: 'var(--font-inter)' }}>
+              Sent at 8:00 AM on weekdays via n8n — tasks, invoices, deals, and automation status per recipient.
+            </p>
+          </div>
+          <span style={{ fontSize: 11, fontWeight: 700, background: '#DCFCE7', color: '#15803D', padding: '3px 10px', borderRadius: 10, fontFamily: 'var(--font-inter)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Active</span>
+        </div>
+        <div style={{ padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button
+            onClick={() => setOpen(true)}
+            style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 14px', background: '#0073BB', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-inter)' }}
+          >
+            <Users size={12} />
+            Configure &amp; Preview
+          </button>
+          <p style={{ fontSize: 12, color: '#94A3B8', margin: 0, fontFamily: 'var(--font-inter)' }}>
+            Manage recipients, schedule, and per-person content toggles.
+          </p>
+        </div>
+      </div>
+    </>
+  )
+}
+
+// ── Automation Rules Tab ───────────────────────────────────────────────────────
+
 function AutomationTab() {
   const qc = useQueryClient()
   const [soOpen, setSoOpen]     = useState(false)
@@ -3040,6 +3078,8 @@ function AutomationTab() {
 
   return (
     <div>
+      <MorningBriefingConfig />
+
       <div className="flex items-center justify-between mb-4">
         <p className="text-sm" style={{ color: 'var(--text2)' }}>
           Automation rules fire when a trigger event occurs. Each rule has one trigger and one action.

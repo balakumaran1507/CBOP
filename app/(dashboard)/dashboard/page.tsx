@@ -1,8 +1,11 @@
 'use client'
 import React from 'react'
+import Link from 'next/link'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AlertBar } from '@/app/components/alert-bar'
 import { StatCard, StatCardSkeleton } from '@/app/components/stat-card'
+import { X, Send, Calendar, Users, FileText, ChevronRight } from 'lucide-react'
+import { BriefingDialog } from '@/app/components/briefing-dialog'
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
@@ -168,46 +171,98 @@ function JobRow({ job }: { job: Job }) {
   )
 }
 
+
 // ─── morning briefing card ────────────────────────────────────────────────────
 
 function MorningBriefingCard() {
-  const [status, setStatus] = React.useState<'idle' | 'running' | 'done' | 'error'>('idle')
+  const [open, setOpen] = React.useState(false)
 
-  async function triggerBriefing() {
-    setStatus('running')
+  return (
+    <>
+      <BriefingDialog open={open} onClose={() => setOpen(false)} />
+      <SectionCard title="Morning Briefing">
+        <p className="text-[13px] font-medium text-text2 mb-1">
+          Automatically sent at <span className="font-mono font-bold text-text1">8:00 AM</span> on weekdays.
+          Covers tasks, overdue invoices, open deals, and automation status — per person.
+        </p>
+        <button
+          onClick={() => setOpen(true)}
+          className="mt-3 text-[12px] font-bold uppercase tracking-wider px-4 py-2 border border-border text-text1 rounded-none hover:bg-bg transition-colors flex items-center gap-2"
+        >
+          <Users size={12} />
+          Configure &amp; Preview
+        </button>
+      </SectionCard>
+    </>
+  )
+}
+
+// ─── invoice alerts section ───────────────────────────────────────────────────
+
+function InvoiceAlertsList({ invoiceAlerts, isLoading }: { invoiceAlerts: InvoiceAlert[]; isLoading: boolean }) {
+  const qc = useQueryClient()
+  const [reminding, setReminding] = React.useState<Record<string, boolean>>({})
+  const [reminded, setReminded] = React.useState<Record<string, boolean>>({})
+
+  async function sendReminder(id: string) {
+    setReminding((s) => ({ ...s, [id]: true }))
     try {
-      const res = await fetch('/api/agents/trigger/morning_briefing', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      })
-      setStatus(res.ok ? 'done' : 'error')
-    } catch {
-      setStatus('error')
+      const res = await fetch(`/api/invoices/${id}/remind`, { method: 'POST', credentials: 'include' })
+      if (res.ok) {
+        setReminded((s) => ({ ...s, [id]: true }))
+        qc.invalidateQueries({ queryKey: ['dashboard'] })
+      }
+    } finally {
+      setReminding((s) => ({ ...s, [id]: false }))
     }
   }
 
+  if (isLoading) return <SkeletonList rows={2} />
+  if (invoiceAlerts.length === 0) return <EmptyState text="No overdue invoices." />
+
   return (
-    <SectionCard title="Morning Briefing">
-      <p className="text-[13px] font-medium text-text2">
-        Daily briefing via <span className="font-mono bg-bg px-1 rounded-sm">morning_briefing</span> agent.
-        Runs automatically at 8am on weekdays.
-      </p>
-      <button
-        onClick={triggerBriefing}
-        disabled={status === 'running'}
-        className="mt-4 text-[12px] font-bold uppercase tracking-wider px-4 py-2 bg-blue text-white rounded-none transition-colors hover:bg-black disabled:opacity-40"
+    <>
+      {invoiceAlerts.map((inv) => {
+        const days = daysOverdue(inv.due_date)
+        return (
+          <div key={inv.id} className="py-3 border-b border-border last:border-0">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[13px] font-bold text-text1 font-mono">{inv.invoice_no}</p>
+              <p className="text-[13px] font-bold text-red font-mono">{formatINR(inv.total)}</p>
+            </div>
+            <p className="text-[12px] font-bold text-text2 uppercase tracking-wider mt-1 truncate">
+              {inv.client_name || '—'}
+            </p>
+            <p className="text-[12px] font-bold text-red uppercase tracking-wider mt-0.5">
+              {days} day{days !== 1 ? 's' : ''} overdue
+            </p>
+            <div className="flex items-center gap-2 mt-2.5">
+              <button
+                onClick={() => sendReminder(inv.id)}
+                disabled={reminding[inv.id] || reminded[inv.id]}
+                className="text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-none border border-amber text-amber hover:bg-amber hover:text-white transition-colors disabled:opacity-40 flex items-center gap-1"
+              >
+                <Send size={9} />
+                {reminded[inv.id] ? 'Sent' : reminding[inv.id] ? '...' : 'Send Reminder'}
+              </button>
+              <Link
+                href="/sales"
+                className="text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-none border border-border text-text3 hover:text-text1 hover:border-text2 transition-colors flex items-center gap-1"
+              >
+                <ChevronRight size={9} />
+                View in Sales
+              </Link>
+            </div>
+          </div>
+        )
+      })}
+      <Link
+        href="/sales"
+        className="mt-3 block text-[11px] font-bold uppercase tracking-wider text-blue hover:underline"
       >
-        {status === 'running' ? 'Triggering…' : 'Run Now'}
-      </button>
-      {status === 'done' && (
-        <p className="text-[13px] font-bold text-green mt-3">Briefing triggered — check Telegram.</p>
-      )}
-      {status === 'error' && (
-        <p className="text-[13px] font-bold text-red mt-3">Failed to trigger. Check agent status.</p>
-      )}
-    </SectionCard>
+        Manage all invoices in Sales →
+      </Link>
+    </>
   )
 }
 
@@ -339,33 +394,7 @@ export default function DashboardPage() {
 
             {/* Invoice Alerts */}
             <SectionCard title="Invoice Alerts">
-              {isLoading ? (
-                <SkeletonList rows={2} />
-              ) : invoiceAlerts.length === 0 ? (
-                <EmptyState text="No overdue invoices." />
-              ) : (
-                invoiceAlerts.map((inv) => {
-                  const days = daysOverdue(inv.due_date)
-                  return (
-                    <div key={inv.id} className="py-3 border-b border-border last:border-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-[13px] font-bold text-text1 font-mono">
-                          {inv.invoice_no}
-                        </p>
-                        <p className="text-[13px] font-bold text-red font-mono">
-                          {formatINR(inv.total)}
-                        </p>
-                      </div>
-                      <p className="text-[12px] font-bold text-text2 uppercase tracking-wider mt-1 truncate">
-                        {inv.client_name || '—'}
-                      </p>
-                      <p className="text-[12px] font-bold text-red uppercase tracking-wider mt-0.5">
-                        {days} day{days !== 1 ? 's' : ''} overdue
-                      </p>
-                    </div>
-                  )
-                })
-              )}
+              <InvoiceAlertsList invoiceAlerts={invoiceAlerts} isLoading={isLoading} />
             </SectionCard>
 
           </div>

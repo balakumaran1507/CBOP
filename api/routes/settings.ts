@@ -1526,4 +1526,163 @@ app.delete('/api/settings/users/:id/company', requireAuth, async (c) => {
   return c.json({ ok: true })
 })
 
+// ── GET /api/settings/morning-briefing ───────────────────────────────────────
+// Returns schedule config + all active users merged with their recipient settings.
+// CEO + creator only.
+
+app.get('/api/settings/morning-briefing', requireAuth, requireRole('ceo'), async (c) => {
+  const [cfgRes, usersRes, recRes] = await Promise.all([
+    query('SELECT id, send_time, active_days, is_active FROM morning_briefing_config LIMIT 1'),
+    query(`SELECT id, name, role, telegram_chat_id, whatsapp_number
+           FROM users WHERE is_active = true ORDER BY name`),
+    query('SELECT user_id, is_active, channel, include_tasks, include_invoices, include_deals, include_automations FROM morning_briefing_recipients'),
+  ])
+
+  const cfg = cfgRes.rows[0] ?? { send_time: '08:00', active_days: [1,2,3,4,5], is_active: true }
+  const recByUser = Object.fromEntries(recRes.rows.map((r) => [r.user_id, r]))
+
+  const recipients = usersRes.rows.map((u) => {
+    const saved = recByUser[u.id]
+    return {
+      user_id:             u.id,
+      name:                u.name,
+      role:                u.role,
+      telegram_chat_id:    u.telegram_chat_id,
+      whatsapp_number:     u.whatsapp_number,
+      is_active:           saved ? saved.is_active           : !!(u.telegram_chat_id || u.whatsapp_number),
+      channel:             saved ? saved.channel              : (u.telegram_chat_id ? 'telegram' : 'whatsapp'),
+      include_tasks:       saved ? saved.include_tasks        : true,
+      include_invoices:    saved ? saved.include_invoices     : true,
+      include_deals:       saved ? saved.include_deals        : true,
+      include_automations: saved ? saved.include_automations  : true,
+    }
+  })
+
+  return c.json({ config: cfg, recipients })
+})
+
+// ── POST /api/settings/morning-briefing ──────────────────────────────────────
+// Saves schedule config + upserts per-recipient settings.
+
+app.post('/api/settings/morning-briefing', requireAuth, requireRole('ceo'), async (c) => {
+  const { config, recipients } = await c.req.json() as {
+    config: { send_time: string; active_days: number[]; is_active: boolean }
+    recipients: { user_id: string; is_active: boolean; channel: string; include_tasks: boolean; include_invoices: boolean; include_deals: boolean; include_automations: boolean }[]
+  }
+
+  await query(
+    `UPDATE morning_briefing_config
+     SET send_time = $1, active_days = $2, is_active = $3, updated_at = NOW()
+     WHERE id = (SELECT id FROM morning_briefing_config LIMIT 1)`,
+    [config.send_time, config.active_days, config.is_active]
+  )
+
+  for (const r of recipients) {
+    await query(
+      `INSERT INTO morning_briefing_recipients (user_id, is_active, channel, include_tasks, include_invoices, include_deals, include_automations, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+       ON CONFLICT (user_id) DO UPDATE SET
+         is_active = $2, channel = $3, include_tasks = $4, include_invoices = $5,
+         include_deals = $6, include_automations = $7, updated_at = NOW()`,
+      [r.user_id, r.is_active, r.channel, r.include_tasks, r.include_invoices, r.include_deals, r.include_automations]
+    )
+  }
+
+  return c.json({ ok: true })
+})
+
+// ── GET /api/settings/morning-briefing/preview ───────────────────────────────
+// Returns a text preview of what the briefing message looks like for a given user.
+
+app.get('/api/settings/morning-briefing/preview', requireAuth, requireRole('ceo'), async (c) => {
+  const userId = c.req.query('user_id')
+  if (!userId) return c.json({ error: 'user_id required' }, 400)
+
+  const companyIds = c.get('companyIds') as string[]
+
+  const [recRes, tasksRes, invoicesRes, dealsRes, jobsRes] = await Promise.all([
+    query(
+      `SELECT mbr.*, u.name, u.role FROM morning_briefing_recipients mbr
+       JOIN users u ON u.id = mbr.user_id WHERE mbr.user_id = $1`,
+      [userId]
+    ),
+    query(
+      `SELECT t.title, t.priority, t.due_date, p.name AS project
+       FROM ops_tasks t LEFT JOIN ops_projects p ON p.id = t.project_id
+       WHERE t.owner_id = $1 AND t.status != 'done'
+         AND (t.due_date IS NULL OR t.due_date <= CURRENT_DATE)
+       ORDER BY t.due_date ASC NULLS LAST LIMIT 10`,
+      [userId]
+    ),
+    query(
+      `SELECT i.invoice_no, i.total, i.due_date, cl.name AS client, co.name AS company
+       FROM sales_invoices i
+       JOIN sales_clients cl ON cl.id = i.client_id
+       JOIN companies co ON co.id = i.company_id
+       WHERE i.company_id = ANY($1) AND i.status != 'paid' AND i.due_date < CURRENT_DATE
+       ORDER BY i.due_date ASC LIMIT 10`,
+      [companyIds]
+    ),
+    query(
+      `SELECT COUNT(*)::int AS open_count, COALESCE(SUM(value), 0)::numeric AS pipeline_value
+       FROM sales_deals WHERE company_id = ANY($1) AND stage NOT IN ('closed_won','closed_lost')`,
+      [companyIds]
+    ),
+    query(
+      `SELECT name, status FROM system_jobs
+       WHERE created_at > NOW() - INTERVAL '24 hours' ORDER BY created_at DESC LIMIT 5`
+    ),
+  ])
+
+  const rec = recRes.rows[0]
+  const sections: { section: string; lines: string[] }[] = []
+
+  if (!rec || rec.include_tasks) {
+    const tasks = tasksRes.rows
+    sections.push({
+      section: 'Tasks due today',
+      lines: tasks.length === 0
+        ? ['No tasks due.']
+        : tasks.map((t) => `  - [${t.priority.toUpperCase()}] ${t.title}${t.due_date ? ` — due ${t.due_date.slice(0, 10)}` : ''}${t.project ? ` (${t.project})` : ''}`),
+    })
+  }
+
+  if (!rec || rec.include_invoices) {
+    const invs = invoicesRes.rows
+    sections.push({
+      section: 'Overdue invoices',
+      lines: invs.length === 0
+        ? ['No overdue invoices.']
+        : invs.map((i) => `  - ${i.invoice_no}  ₹${parseFloat(String(i.total)).toLocaleString('en-IN', { maximumFractionDigits: 0 })}  ${i.client}  (${i.company})  due ${i.due_date?.toString().slice(0, 10) ?? '—'}`),
+    })
+  }
+
+  if (!rec || rec.include_deals) {
+    const d = dealsRes.rows[0]
+    sections.push({
+      section: 'Open deals',
+      lines: [`  ${d?.open_count ?? 0} open deal(s) — pipeline value ₹${parseFloat(String(d?.pipeline_value ?? 0)).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`],
+    })
+  }
+
+  if (!rec || rec.include_automations) {
+    const jobs = jobsRes.rows
+    sections.push({
+      section: 'Automation (last 24h)',
+      lines: jobs.length === 0
+        ? ['No automations ran.']
+        : jobs.map((j) => `  - ${j.name}  [${j.status.toUpperCase()}]`),
+    })
+  }
+
+  const lines: string[] = [
+    `Good morning, ${rec?.name ?? 'team'} — here is your briefing for today.`,
+    '',
+    ...sections.flatMap((s) => [`${s.section.toUpperCase()}`, ...s.lines, '']),
+    '— CBOP',
+  ]
+
+  return c.json({ preview: lines.join('\n') })
+})
+
 export default app

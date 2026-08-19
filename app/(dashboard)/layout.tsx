@@ -54,7 +54,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
       <div className="flex flex-col" style={{ height: '100vh', overflow: 'hidden' }}>
         <Topbar
           role={user.role}
-          companies={user.companies ?? []}
           name={user.name ?? ''}
           email={user.email ?? ''}
           nav={user.nav ?? []}

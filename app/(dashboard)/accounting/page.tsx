@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useCompany } from '@/app/lib/company-context'
 import { ArrowUpRight, Calculator, Plus, CreditCard, Receipt, Building, ExternalLink } from 'lucide-react'
 
 // CBOP Accounting has two homes, deliberately:
@@ -186,10 +185,25 @@ function GhostAppLayout({ companyName, fullAppUrl }: { companyName: string; full
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+interface Company { id: string; name: string }
+
 export default function AccountingPage() {
   const qc = useQueryClient()
-  const { activeCompany } = useCompany()
-  const companyId = activeCompany?.id ?? null
+  const [companyId, setCompanyId] = useState<string | null>(null)
+
+  const { data: companiesData } = useQuery<{ companies: Company[] }>({
+    queryKey: ['companies-list'],
+    queryFn: async () => {
+      const res = await fetch('/api/companies', { credentials: 'include' })
+      if (!res.ok) throw new Error('Failed to load companies')
+      return res.json()
+    },
+  })
+  const companies = companiesData?.companies ?? []
+
+  useEffect(() => {
+    if (!companyId && companies.length > 0) setCompanyId(companies[0].id)
+  }, [companies, companyId])
 
   const [quickAdd, setQuickAdd] = useState({ expense_account_id: '', bank_account_id: '', amount: '', description: '', date: new Date().toISOString().slice(0, 10) })
   const [quickAddSuccess, setQuickAddSuccess] = useState(false)
@@ -314,14 +328,25 @@ export default function AccountingPage() {
             The day-to-day basics, right here in CBOP <span className="inline-block bg-border/50 text-[11px] font-mono px-1.5 py-0.5 rounded ml-1 text-text1">N</span> to quick-add
           </p>
         </div>
-        <a 
-          href={`${FULL_APP_URL}/dashboard`} 
-          target="_blank" 
-          rel="noopener noreferrer" 
-          className="flex items-center gap-2 bg-card border border-border/60 text-text1 rounded-xl px-5 py-2.5 text-[14px] font-semibold hover:bg-bg hover:border-border transition-all active:scale-95 shadow-sm"
-        >
-          Open full Accounting app <ArrowUpRight size={16} className="text-text2" />
-        </a>
+        <div className="flex items-center gap-3">
+          {companies.length > 1 && (
+            <select
+              value={companyId ?? ''}
+              onChange={e => setCompanyId(e.target.value)}
+              style={{ border: '1px solid #D5DBDB', borderRadius: 6, height: 36, padding: '0 10px', fontSize: 13, fontFamily: 'var(--font-inter), sans-serif', color: '#1E293B', background: '#fff', cursor: 'pointer' }}
+            >
+              {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          )}
+          <a
+            href={`${FULL_APP_URL}/dashboard`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 bg-card border border-border/60 text-text1 rounded-xl px-5 py-2.5 text-[14px] font-semibold hover:bg-bg hover:border-border transition-all active:scale-95 shadow-sm"
+          >
+            Open full Accounting app <ArrowUpRight size={16} className="text-text2" />
+          </a>
+        </div>
       </div>
 
       {!companyId ? (
@@ -354,7 +379,7 @@ export default function AccountingPage() {
       ) : !hasChartOfAccounts ? (
         /* Ghost app + lock card — shown when no chart of accounts exists */
         <GhostAppLayout
-          companyName={activeCompany?.name ?? 'this company'}
+          companyName={companies.find(c => c.id === companyId)?.name ?? 'this company'}
           fullAppUrl={FULL_APP_URL}
         />
       ) : (

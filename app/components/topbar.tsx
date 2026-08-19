@@ -2,12 +2,10 @@
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useCompany } from '@/app/lib/company-context'
 import { authClient } from '@/app/lib/auth-client'
 import { NotificationBell } from '@/app/components/notification-bell'
 import { NavSearch } from '@/app/components/nav-search'
-import { Settings, User, ChevronDown, LogOut, Building2 } from 'lucide-react'
-import type { Company } from '@/app/lib/company-context'
+import { Settings, User, ChevronDown, LogOut } from 'lucide-react'
 import type { NavManifestGroup } from '@/api/lib/modules'
 
 const AVATAR_BG: Record<string, string> = {
@@ -26,7 +24,6 @@ const ROLE_LABEL: Record<string, string> = {
 
 interface TopbarProps {
   role: string
-  companies: Company[]
   name: string
   email: string
   nav: NavManifestGroup[]
@@ -41,18 +38,12 @@ function getInitials(name: string): string {
     .toUpperCase()
 }
 
-export function Topbar({ role, companies, name, email, nav }: TopbarProps) {
+export function Topbar({ role, name, email, nav }: TopbarProps) {
   const router = useRouter()
-  const { activeCompany, setActiveCompany, companies: ctxCompanies } = useCompany()
 
-  const [userMenuOpen,       setUserMenuOpen]       = useState(false)
-  const [companySwitcherOpen, setCompanySwitcherOpen] = useState(false)
-  const [mounted, setMounted] = useState(false)
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
 
-  const profileRef         = useRef<HTMLDivElement>(null)
-  const companySwitcherRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => { setMounted(true) }, [])
+  const profileRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!userMenuOpen) return
@@ -62,15 +53,6 @@ export function Topbar({ role, companies, name, email, nav }: TopbarProps) {
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [userMenuOpen])
-
-  useEffect(() => {
-    if (!companySwitcherOpen) return
-    function onDown(e: MouseEvent) {
-      if (companySwitcherRef.current && !companySwitcherRef.current.contains(e.target as Node)) setCompanySwitcherOpen(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [companySwitcherOpen])
 
   async function handleLogout() {
     await authClient.signOut()
@@ -92,8 +74,6 @@ export function Topbar({ role, companies, name, email, nav }: TopbarProps) {
       <style>{`
         .cbop-nav-hover:hover { background-color: rgba(255,255,255,0.07) !important; }
         .cbop-menu-item:hover { background-color: #F5F7FA !important; }
-        .cbop-company-opt:hover { background-color: #F0F4F8 !important; }
-        .cbop-company-opt-active { background-color: #EBF4FB !important; }
         .cbop-signout:hover { background-color: #FEF2F0 !important; }
       `}</style>
 
@@ -141,132 +121,6 @@ export function Topbar({ role, companies, name, email, nav }: TopbarProps) {
 
       {/* ── RIGHT SECTION ── */}
       <div style={{ display: 'flex', alignItems: 'center', paddingRight: 12, gap: 4, flexShrink: 0 }}>
-
-        {/* Company switcher */}
-        {mounted && (
-          <div ref={companySwitcherRef} style={{ position: 'relative', marginRight: 4 }}>
-            {ctxCompanies.length <= 1 ? (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  fontSize: 12,
-                  fontFamily: 'var(--font-inter), sans-serif',
-                  color: 'rgba(255,255,255,0.55)',
-                  backgroundColor: 'rgba(255,255,255,0.06)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  borderRadius: 6,
-                  padding: '4px 10px',
-                }}
-              >
-                <Building2 size={11} style={{ opacity: 0.6, flexShrink: 0 }} />
-                <span style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {activeCompany?.name ?? '—'}
-                </span>
-              </div>
-            ) : (
-              <>
-                <button
-                  className="cbop-nav-hover"
-                  onClick={() => setCompanySwitcherOpen(!companySwitcherOpen)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    fontSize: 12,
-                    fontFamily: 'var(--font-inter), sans-serif',
-                    color: 'rgba(255,255,255,0.75)',
-                    backgroundColor: 'rgba(255,255,255,0.06)',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    borderRadius: 6,
-                    padding: '4px 10px',
-                    cursor: 'pointer',
-                    transition: 'background-color 0.1s',
-                  }}
-                >
-                  <Building2 size={11} style={{ opacity: 0.7, flexShrink: 0 }} />
-                  <span style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {activeCompany?.name ?? '—'}
-                  </span>
-                  <ChevronDown
-                    size={11}
-                    style={{
-                      flexShrink: 0,
-                      opacity: 0.5,
-                      transform: companySwitcherOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-                      transition: 'transform 0.15s',
-                    }}
-                  />
-                </button>
-
-                {companySwitcherOpen && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      top: 'calc(100% + 6px)',
-                      right: 0,
-                      backgroundColor: '#ffffff',
-                      border: '1px solid #E2E8F0',
-                      borderRadius: 8,
-                      boxShadow: '0 4px 16px rgba(0,0,0,0.12), 0 1px 4px rgba(0,0,0,0.06)',
-                      zIndex: 100,
-                      minWidth: 200,
-                      overflow: 'hidden',
-                    }}
-                  >
-                    <div
-                      style={{
-                        padding: '8px 12px 6px',
-                        fontSize: 10,
-                        fontWeight: 600,
-                        letterSpacing: '0.06em',
-                        textTransform: 'uppercase',
-                        color: '#94A3B8',
-                        fontFamily: 'var(--font-inter), sans-serif',
-                      }}
-                    >
-                      Switch company
-                    </div>
-                    {ctxCompanies.map((company) => {
-                      const isSelected = activeCompany?.id === company.id
-                      return (
-                        <button
-                          key={company.id}
-                          className={`cbop-company-opt${isSelected ? ' cbop-company-opt-active' : ''}`}
-                          onClick={() => { setActiveCompany(company); setCompanySwitcherOpen(false) }}
-                          style={{
-                            width: '100%',
-                            textAlign: 'left',
-                            padding: '8px 12px',
-                            fontSize: 13,
-                            fontFamily: 'var(--font-inter), sans-serif',
-                            color: isSelected ? '#0073BB' : '#1E293B',
-                            fontWeight: isSelected ? 600 : 400,
-                            backgroundColor: 'transparent',
-                            border: 'none',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 8,
-                          }}
-                        >
-                          {isSelected && (
-                            <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#0073BB', flexShrink: 0 }} />
-                          )}
-                          {!isSelected && (
-                            <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#CBD5E1', flexShrink: 0 }} />
-                          )}
-                          {company.name}
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        )}
 
         {/* Notification bell */}
         <NotificationBell />

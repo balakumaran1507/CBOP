@@ -5,6 +5,7 @@ import { query, transaction } from '../lib/db'
 import { sendEmail } from '../lib/mailer'
 import { sendViaOpenClaw } from '../lib/openclaw'
 import { getCompanyBrand } from '../lib/company-brand'
+import { writeMutationAuditLog } from '../lib/audit-log'
 import '../lib/hono-vars'
 
 const app = new Hono()
@@ -213,6 +214,10 @@ app.post('/api/hiring/batches', requireAuth, requireRole('ceo', 'coo', 'cto'), a
   )
   const batch = batchRes.rows[0]
   const batchId = batch.id as string
+
+  await writeMutationAuditLog(c, {
+    table: 'hiring_batches', op: 'create', id: batchId, after: batch, companyId: company_id,
+  })
 
   // Insert candidates in order + compute estimated_at
   const scheduledDate = new Date(scheduled_at)
@@ -428,6 +433,12 @@ app.patch('/api/hiring/batches/:id/start', requireAuth, requireRole('ceo', 'coo'
     if (err instanceof RouteError) return c.json({ error: err.message }, err.status as 403 | 404 | 409)
     throw err
   }
+
+  await writeMutationAuditLog(c, {
+    table: 'hiring_batches', op: 'update', id: batchId,
+    before: { status: 'pending' }, after: { status: 'active', current_index: 0 },
+    companyId: batch.company_id as string,
+  })
 
   // Notifications are external I/O (WhatsApp/email) — fire after the
   // transaction has committed, never while holding the row lock.
@@ -646,8 +657,19 @@ app.patch('/api/hiring/batches/:id/next', requireAuth, requireRole('ceo', 'coo',
   if (result.kind === 'conflict') return c.json({ error: result.message }, result.status as 403 | 404 | 409)
 
   if (result.kind === 'complete') {
+    await writeMutationAuditLog(c, {
+      table: 'hiring_batches', op: 'update', id: batchId,
+      before: { status: 'active' }, after: { status: 'complete', decision, summary: result.summary },
+      companyId: null,
+    })
     return c.json({ ok: true, complete: true, summary: result.summary })
   }
+
+  await writeMutationAuditLog(c, {
+    table: 'hiring_batches', op: 'update', id: batchId,
+    after: { decision, next_position: result.nextPosition },
+    companyId: result.companyId,
+  })
 
   // kind === 'advanced' — fire notifications after the transaction committed,
   // never while holding the row lock.
@@ -714,6 +736,11 @@ app.patch('/api/hiring/batches/:id/complete', requireAuth, requireRole('ceo', 'c
     `UPDATE hiring_batches SET status = 'complete', completed_at = NOW() WHERE id = $1`,
     [batchId],
   )
+
+  await writeMutationAuditLog(c, {
+    table: 'hiring_batches', op: 'update', id: batchId,
+    before: { status: batch.status }, after: { status: 'complete' }, companyId: batch.company_id as string,
+  })
 
   // ── Generate offer letters for all accepted candidates ─────────────────────
 
@@ -888,6 +915,11 @@ app.patch('/api/hiring/batches/:id/cancel', requireAuth, requireRole('ceo', 'coo
       [cand.applicant_id],
     )
 
+    await writeMutationAuditLog(c, {
+      table: 'hiring_batch_candidates', op: 'update', id: cand.id,
+      after: { status: 'skipped', reason }, companyId: batch.company_id as string,
+    })
+
     try {
       const html = buildCancelEmail(String(cand.name))
       await sendEmail({
@@ -903,6 +935,11 @@ app.patch('/api/hiring/batches/:id/cancel', requireAuth, requireRole('ceo', 'coo
 
   // Cancel whole batch
   await query(`UPDATE hiring_batches SET status = 'cancelled' WHERE id = $1`, [batchId])
+
+  await writeMutationAuditLog(c, {
+    table: 'hiring_batches', op: 'update', id: batchId,
+    before: { status: batch.status }, after: { status: 'cancelled', reason }, companyId: batch.company_id as string,
+  })
 
   // Email all candidates who haven't been decided yet (waiting or current)
   const candsRes = await query(
@@ -940,11 +977,17 @@ app.delete('/api/hiring/batches/:id', requireAuth, requireRole('ceo', 'coo', 'ct
   const companyIds = c.get('companyIds') as string[]
   const batchId    = c.req.param('id')
 
-  const batchRes = await query(`SELECT company_id FROM hiring_batches WHERE id = $1`, [batchId])
+  const batchRes = await query(`SELECT * FROM hiring_batches WHERE id = $1`, [batchId])
   if (!batchRes.rows.length) return c.json({ error: 'Batch not found' }, 404)
   if (!companyIds.includes(String(batchRes.rows[0].company_id))) return c.json({ error: 'Forbidden' }, 403)
+  const before = batchRes.rows[0]
 
   await query(`DELETE FROM hiring_batches WHERE id = $1`, [batchId])
+
+  await writeMutationAuditLog(c, {
+    table: 'hiring_batches', op: 'delete', id: batchId, before, companyId: before.company_id,
+  })
+
   return c.json({ ok: true })
 })
 

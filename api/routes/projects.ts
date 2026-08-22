@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { requireAuth } from '../middleware/require-auth'
 import { query } from '../lib/db'
 import { notFound, validationError } from '../lib/route-utils'
+import { writeMutationAuditLog } from '../lib/audit-log'
 import '../lib/hono-vars'
 
 const app = new Hono()
@@ -69,8 +70,14 @@ app.post('/api/projects', requireAuth, async (c) => {
       cat,
     ]
   )
+  const project = result.rows[0]
 
-  return c.json({ project: result.rows[0] }, 201)
+  await writeMutationAuditLog(c, {
+    table: 'ops_projects', op: 'create', id: project.id, after: project,
+    companyId: workType === 'internal' ? null : company_id,
+  })
+
+  return c.json({ project }, 201)
 })
 
 // ── PATCH /api/projects/:id ───────────────────────────────────────────────────
@@ -85,6 +92,14 @@ app.patch('/api/projects/:id', requireAuth, async (c) => {
   if (status   && !validStatuses.includes(status))      return validationError(c, 'Invalid status')
   if (health   && !VALID_HEALTHS.includes(health))      return validationError(c, 'Invalid health')
   if (category && !VALID_CATEGORIES.includes(category)) return validationError(c, 'Invalid category')
+
+  const existing = await query(
+    `SELECT id, company_id, name, status, work_type, category, health
+     FROM ops_projects WHERE id = $1 AND (company_id = ANY($2) OR work_type = 'internal')`,
+    [projectId, companyIds]
+  )
+  if (existing.rows.length === 0) return notFound(c, 'Project')
+  const before = existing.rows[0]
 
   const result = await query(
     `UPDATE ops_projects
@@ -105,7 +120,13 @@ app.patch('/api/projects/:id', requireAuth, async (c) => {
   )
 
   if (result.rows.length === 0) return notFound(c, 'Project')
-  return c.json({ success: true, project: result.rows[0] })
+  const project = result.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'ops_projects', op: 'update', id: projectId, before, after: project, companyId: before.company_id,
+  })
+
+  return c.json({ success: true, project })
 })
 
 export default app

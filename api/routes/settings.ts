@@ -284,7 +284,8 @@ app.patch('/api/settings/users/:id', requireAuth, requireRole('ceo'), async (c) 
 
 app.get('/api/settings/companies', requireAuth, requireRole('ceo'), async (c) => {
   const result = await query(
-    `SELECT id, name, type, gstin, upi_id, bank_details, invoice_prefix, address, company_seal, logo_initials, logo_url, is_active, created_at
+    `SELECT id, name, type, gstin, upi_id, bank_details, invoice_prefix, quotation_prefix,
+            invoice_terms, address, company_seal, logo_initials, logo_url, is_active, created_at
      FROM companies ORDER BY name`,
     []
   )
@@ -310,11 +311,17 @@ app.post('/api/settings/companies', requireAuth, requireRole('ceo'), async (c) =
     return c.json({ error: `invoice_prefix "${invoice_prefix}" is already in use` }, 409)
   }
 
+  // companies.quotation_prefix is NOT NULL with no DB default (migration 068
+  // only backfilled existing rows) - derive it from invoice_prefix the same
+  // way the migration's own backfill did, so company creation can't violate
+  // the NOT NULL constraint.
+  const quotationPrefix = `${invoice_prefix}-QUO`
+
   try {
     const result = await query(
-      `INSERT INTO companies (name, type, gstin, upi_id, bank_details, invoice_prefix, address, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, true)
-       RETURNING id, name, type, gstin, upi_id, bank_details, invoice_prefix, address, company_seal, logo_initials, logo_url, is_active, created_at`,
+      `INSERT INTO companies (name, type, gstin, upi_id, bank_details, invoice_prefix, quotation_prefix, address, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
+       RETURNING id, name, type, gstin, upi_id, bank_details, invoice_prefix, quotation_prefix, address, company_seal, logo_initials, logo_url, is_active, created_at`,
       [
         name,
         type ?? null,
@@ -322,6 +329,7 @@ app.post('/api/settings/companies', requireAuth, requireRole('ceo'), async (c) =
         upi_id ?? null,
         bank_details ? JSON.stringify(bank_details) : null,
         invoice_prefix,
+        quotationPrefix,
         address ?? null,
       ]
     )
@@ -350,11 +358,11 @@ app.post('/api/settings/companies', requireAuth, requireRole('ceo'), async (c) =
 app.patch('/api/settings/companies/:id', requireAuth, requireRole('ceo'), async (c) => {
   const id = c.req.param('id')
   const body = await c.req.json()
-  const { name, type, gstin, upi_id, bank_details, address, company_seal, logo_initials, invoice_prefix, is_active } = body
+  const { name, type, gstin, upi_id, bank_details, address, company_seal, logo_initials, invoice_prefix, quotation_prefix, invoice_terms, is_active } = body
 
   const beforeRes = await query(
-    `SELECT id, name, type, gstin, upi_id, bank_details, invoice_prefix, address,
-            company_seal, logo_initials, logo_url, is_active
+    `SELECT id, name, type, gstin, upi_id, bank_details, invoice_prefix, quotation_prefix,
+            invoice_terms, address, company_seal, logo_initials, logo_url, is_active
      FROM companies WHERE id = $1`,
     [id]
   )
@@ -372,7 +380,21 @@ app.patch('/api/settings/companies/:id', requireAuth, requireRole('ceo'), async 
   if (address      !== undefined) { sets.push(`address = $${p++}`);      params.push(address || null) }
   if (company_seal    !== undefined) { sets.push(`company_seal = $${p++}`);    params.push(company_seal || null) }
   if (logo_initials   !== undefined) { sets.push(`logo_initials = $${p++}`);   params.push(logo_initials || null) }
+  if (invoice_terms   !== undefined) { sets.push(`invoice_terms = $${p++}`);   params.push(invoice_terms || null) }
   if (is_active        !== undefined) { sets.push(`is_active = $${p++}`);      params.push(!!is_active) }
+
+  if (quotation_prefix !== undefined) {
+    const normalizedQuo = String(quotation_prefix).trim().toUpperCase()
+    if (!normalizedQuo) return c.json({ error: 'quotation_prefix cannot be blank' }, 400)
+
+    const dupeQuo = await query(`SELECT 1 FROM companies WHERE quotation_prefix = $1 AND id != $2`, [normalizedQuo, id])
+    if (dupeQuo.rows.length > 0) {
+      return c.json({ error: `quotation_prefix "${normalizedQuo}" is already in use` }, 409)
+    }
+
+    sets.push(`quotation_prefix = $${p++}`)
+    params.push(normalizedQuo)
+  }
 
   if (invoice_prefix !== undefined) {
     const prefixCheck = invoicePrefixSchema.safeParse(invoice_prefix)
@@ -402,7 +424,8 @@ app.patch('/api/settings/companies/:id', requireAuth, requireRole('ceo'), async 
   try {
     result = await query(
       `UPDATE companies SET ${sets.join(', ')} WHERE id = $${p}
-       RETURNING id, name, type, gstin, upi_id, bank_details, invoice_prefix, address, company_seal, logo_initials, logo_url, is_active`,
+       RETURNING id, name, type, gstin, upi_id, bank_details, invoice_prefix, quotation_prefix,
+                 invoice_terms, address, company_seal, logo_initials, logo_url, is_active`,
       params
     )
   } catch (err) {

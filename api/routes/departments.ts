@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { requireAuth } from '../middleware/require-auth'
 import { requireRole } from '../middleware/require-role'
 import { query } from '../lib/db'
+import { writeMutationAuditLog } from '../lib/audit-log'
 import '../lib/hono-vars'
 
 const app = new Hono()
@@ -76,8 +77,13 @@ app.post('/api/departments', requireAuth, requireRole('ceo', 'coo', 'cto'), asyn
      RETURNING id, company_id, name, description, manager_id, created_at`,
     [company_id, name, description || null, manager_id || null]
   )
+  const department = result.rows[0]
 
-  return c.json({ department: result.rows[0] }, 201)
+  await writeMutationAuditLog(c, {
+    table: 'departments', op: 'create', id: department.id, after: department, companyId: company_id,
+  })
+
+  return c.json({ department }, 201)
 })
 
 // ── PATCH /api/departments/:id ────────────────────────────────────────────────
@@ -93,7 +99,7 @@ app.patch('/api/departments/:id', requireAuth, requireRole('ceo', 'coo', 'cto'),
 
   // Verify department is in scope
   const existing = await query(
-    `SELECT id, company_id FROM departments WHERE id = $1 AND company_id = ANY($2)`,
+    `SELECT * FROM departments WHERE id = $1 AND company_id = ANY($2)`,
     [departmentId, companyIds]
   )
   if (existing.rows.length === 0) return c.json({ error: 'Department not found' }, 404)
@@ -132,8 +138,13 @@ app.patch('/api/departments/:id', requireAuth, requireRole('ceo', 'coo', 'cto'),
     `UPDATE departments SET ${setClauses.join(', ')} WHERE id = $${params.length} RETURNING *`,
     params
   )
+  const department = result.rows[0]
 
-  return c.json({ department: result.rows[0] })
+  await writeMutationAuditLog(c, {
+    table: 'departments', op: 'update', id: departmentId, before: dept, after: department, companyId: dept.company_id,
+  })
+
+  return c.json({ department })
 })
 
 // ── DELETE /api/departments/:id ───────────────────────────────────────────────
@@ -145,10 +156,11 @@ app.delete('/api/departments/:id', requireAuth, requireRole('ceo', 'coo', 'cto')
 
   // Scope check
   const existing = await query(
-    `SELECT id FROM departments WHERE id = $1 AND company_id = ANY($2)`,
+    `SELECT * FROM departments WHERE id = $1 AND company_id = ANY($2)`,
     [departmentId, companyIds]
   )
   if (existing.rows.length === 0) return c.json({ error: 'Department not found' }, 404)
+  const before = existing.rows[0]
 
   // Guard: check for active employees
   const activeEmployees = await query(
@@ -160,6 +172,10 @@ app.delete('/api/departments/:id', requireAuth, requireRole('ceo', 'coo', 'cto')
   }
 
   await query(`DELETE FROM departments WHERE id = $1`, [departmentId])
+
+  await writeMutationAuditLog(c, {
+    table: 'departments', op: 'delete', id: departmentId, before, companyId: before.company_id,
+  })
 
   return c.json({ ok: true })
 })

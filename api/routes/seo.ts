@@ -8,6 +8,7 @@ import { getPageSpeed, isPageSpeedConfigured } from '../lib/pagespeed'
 import { getConnection, getValidAccessToken } from '../lib/seo-tokens'
 import { auditUrl } from '../lib/seo-auditor'
 import { randomBytes } from 'crypto'
+import { writeMutationAuditLog } from '../lib/audit-log'
 import '../lib/hono-vars'
 
 const app = new Hono()
@@ -82,15 +83,20 @@ app.get('/api/seo/oauth/callback', requireAuth, async (c) => {
 
     // Google only returns a refresh_token on first consent (prompt=consent forces
     // it every time here, but be defensive - keep the old one if this response omits it)
-    await query(
+    const { rows: [conn] } = await query(
       `INSERT INTO seo_site_connections (company_id, site_url, google_access_token, google_refresh_token, token_expires_at, connected_by)
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (company_id, site_url) DO UPDATE SET
          google_access_token = EXCLUDED.google_access_token,
          google_refresh_token = COALESCE(EXCLUDED.google_refresh_token, seo_site_connections.google_refresh_token),
-         token_expires_at = EXCLUDED.token_expires_at`,
+         token_expires_at = EXCLUDED.token_expires_at
+       RETURNING id, company_id, site_url`,
       [pending.companyId, 'pending-site-selection', tokens.access_token, tokens.refresh_token ?? '', expiresAt, pending.userId]
     )
+
+    await writeMutationAuditLog(c, {
+      table: 'seo_site_connections', op: 'create', id: conn.id, after: conn, companyId: pending.companyId,
+    })
 
     return c.redirect('/settings?tab=seo&connected=true')
   } catch (err) {
@@ -125,11 +131,17 @@ app.delete('/api/seo/connections/:id', requireAuth, requireRole('ceo'), async (c
   const id = c.req.param('id') as string
   const companyIds = c.get('companyIds') as string[]
 
-  const existing = await query(`SELECT company_id FROM seo_site_connections WHERE id = $1`, [id])
+  const existing = await query(`SELECT id, company_id, site_url, ga4_property_id FROM seo_site_connections WHERE id = $1`, [id])
   if (existing.rows.length === 0) return c.json({ error: 'Not found' }, 404)
   if (!companyIds.includes(existing.rows[0].company_id)) return c.json({ error: 'Forbidden' }, 403)
+  const before = existing.rows[0]
 
   await query(`DELETE FROM seo_site_connections WHERE id = $1`, [id])
+
+  await writeMutationAuditLog(c, {
+    table: 'seo_site_connections', op: 'delete', id, before, companyId: before.company_id,
+  })
+
   return c.json({ ok: true })
 })
 
@@ -144,9 +156,10 @@ app.patch('/api/seo/connections/:id', requireAuth, requireRole('ceo'), async (c)
   const body = await c.req.json()
   const { site_url, ga4_property_id } = body as { site_url?: string; ga4_property_id?: string }
 
-  const existing = await query(`SELECT company_id FROM seo_site_connections WHERE id = $1`, [id])
+  const existing = await query(`SELECT id, company_id, site_url, ga4_property_id FROM seo_site_connections WHERE id = $1`, [id])
   if (existing.rows.length === 0) return c.json({ error: 'Not found' }, 404)
   if (!companyIds.includes(existing.rows[0].company_id)) return c.json({ error: 'Forbidden' }, 403)
+  const before = existing.rows[0]
 
   const result = await query(
     `UPDATE seo_site_connections SET
@@ -155,7 +168,13 @@ app.patch('/api/seo/connections/:id', requireAuth, requireRole('ceo'), async (c)
      WHERE id = $3 RETURNING *`,
     [site_url ?? null, ga4_property_id ?? null, id]
   )
-  return c.json({ connection: result.rows[0] })
+  const connection = result.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'seo_site_connections', op: 'update', id, before, after: connection, companyId: before.company_id,
+  })
+
+  return c.json({ connection })
 })
 
 // ── Build Unit 2: SEO Monitoring dashboard endpoints ─────────────────────────
@@ -305,7 +324,13 @@ app.post('/api/seo/audit', requireAuth, requireRole('ceo'), async (c) => {
       `INSERT INTO technical_seo_audits (company_id, url, score, issues) VALUES ($1, $2, $3, $4) RETURNING *`,
       [company_id, url, result.score, JSON.stringify(result.issues)]
     )
-    return c.json({ audit: inserted.rows[0] })
+    const audit = inserted.rows[0]
+
+    await writeMutationAuditLog(c, {
+      table: 'technical_seo_audits', op: 'create', id: audit.id, after: audit, companyId: company_id,
+    })
+
+    return c.json({ audit })
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : 'Audit failed' }, 502)
   }

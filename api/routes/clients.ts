@@ -2,7 +2,8 @@ import { Hono } from 'hono'
 import { requireAuth } from '../middleware/require-auth'
 import { requireRole } from '../middleware/require-role'
 import { query } from '../lib/db'
-import { validationError } from '../lib/route-utils'
+import { notFound, validationError } from '../lib/route-utils'
+import { writeMutationAuditLog } from '../lib/audit-log'
 import '../lib/hono-vars'
 
 const app = new Hono()
@@ -59,7 +60,84 @@ app.post('/api/clients', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c
     [company_id, name, email || null, phone || null, org_name || null, address || null, gstin || null, userId]
   )
 
-  return c.json({ client: result.rows[0] }, 201)
+  const client = result.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'sales_clients', op: 'create', id: client.id, after: client, companyId: company_id,
+  })
+
+  return c.json({ client }, 201)
+})
+
+// ── PATCH /api/clients/:id ────────────────────────────────────────────────────
+
+app.patch('/api/clients/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
+  const clientId    = c.req.param('id') as string
+  const companyIds  = c.get('companyIds') as string[]
+  const body        = await c.req.json()
+  const { name, email, phone, org_name, address, gstin } = body
+
+  const existing = await query(
+    `SELECT id, company_id, name, email, phone, org_name, address, gstin
+     FROM sales_clients WHERE id = $1 AND company_id = ANY($2)`,
+    [clientId, companyIds]
+  )
+  if (existing.rows.length === 0) return notFound(c, 'Client')
+  const before = existing.rows[0]
+
+  const result = await query(
+    `UPDATE sales_clients
+     SET name     = COALESCE($1, name),
+         email    = COALESCE($2, email),
+         phone    = COALESCE($3, phone),
+         org_name = COALESCE($4, org_name),
+         address  = COALESCE($5, address),
+         gstin    = COALESCE($6, gstin)
+     WHERE id = $7 AND company_id = ANY($8)
+     RETURNING id, name, email, phone, org_name, address, gstin`,
+    [
+      name || null, email || null, phone || null, org_name || null,
+      address || null, gstin || null,
+      clientId, companyIds,
+    ]
+  )
+
+  if (result.rows.length === 0) return notFound(c, 'Client')
+  const after = result.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'sales_clients', op: 'update', id: clientId, before, after, companyId: before.company_id,
+  })
+
+  return c.json({ success: true, client: after })
+})
+
+// ── DELETE /api/clients/:id ───────────────────────────────────────────────────
+
+app.delete('/api/clients/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
+  const clientId   = c.req.param('id') as string
+  const companyIds = c.get('companyIds') as string[]
+
+  const existing = await query(
+    `SELECT id, company_id, name, email, phone, org_name, address, gstin
+     FROM sales_clients WHERE id = $1 AND company_id = ANY($2)`,
+    [clientId, companyIds]
+  )
+  if (existing.rows.length === 0) return notFound(c, 'Client')
+  const before = existing.rows[0]
+
+  const dealsCheck = await query(`SELECT COUNT(*) AS cnt FROM sales_deals WHERE client_id = $1`, [clientId])
+  if (parseInt(dealsCheck.rows[0].cnt, 10) > 0) {
+    return c.json({ error: 'Cannot delete client with existing deals. Remove or reassign their deals first.' }, 409)
+  }
+
+  await query(`DELETE FROM sales_clients WHERE id = $1`, [clientId])
+
+  await writeMutationAuditLog(c, {
+    table: 'sales_clients', op: 'delete', id: clientId, before, companyId: before.company_id,
+  })
+
+  return c.json({ ok: true })
 })
 
 export default app

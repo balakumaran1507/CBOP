@@ -5,6 +5,7 @@ import { query } from '../lib/db'
 import { isLinkedInConfigured, buildAuthUrl, exchangeCodeForTokens, getMemberInfo, createLinkedInPost, type LinkedInConnectionType } from '../lib/linkedin'
 import { ollamaComplete } from '../lib/local-llm'
 import { randomBytes } from 'crypto'
+import { writeMutationAuditLog } from '../lib/audit-log'
 import '../lib/hono-vars'
 
 const app = new Hono()
@@ -100,29 +101,37 @@ app.get('/api/social/linkedin/callback', requireAuth, async (c) => {
 
     if (pending.connectionType === 'member') {
       const member = await getMemberInfo(tokens.access_token)
-      await query(
+      const { rows: [conn] } = await query(
         `INSERT INTO social_connections (company_id, platform, connection_type, account_name, account_id, access_token, refresh_token, token_expires_at, connected_by)
          VALUES ($1, 'linkedin', 'member', $2, $3, $4, $5, $6, $7)
          ON CONFLICT (company_id, platform, account_id) DO UPDATE SET
            access_token = EXCLUDED.access_token,
            refresh_token = COALESCE(EXCLUDED.refresh_token, social_connections.refresh_token),
-           token_expires_at = EXCLUDED.token_expires_at`,
+           token_expires_at = EXCLUDED.token_expires_at
+         RETURNING id, company_id, platform, connection_type, account_name, account_id`,
         [pending.companyId, member.name, member.personUrn, tokens.access_token, tokens.refresh_token ?? '', expiresAt, pending.userId]
       )
+      await writeMutationAuditLog(c, {
+        table: 'social_connections', op: 'create', id: conn.id, after: conn, companyId: pending.companyId,
+      })
     } else {
       // Organization posting needs the org URN, which this scope alone can't
       // look up (see docs/modules/SOCIAL_Build_Plan.md Phase 2) - store the connection
       // with a placeholder account_id; the frontend prompts for the real
       // organization URN as a follow-up PATCH once Standard Tier is granted.
-      await query(
+      const { rows: [conn] } = await query(
         `INSERT INTO social_connections (company_id, platform, connection_type, account_name, account_id, access_token, refresh_token, token_expires_at, connected_by)
          VALUES ($1, 'linkedin', 'organization', 'Pending organization URN', 'pending', $2, $3, $4, $5)
          ON CONFLICT (company_id, platform, account_id) DO UPDATE SET
            access_token = EXCLUDED.access_token,
            refresh_token = COALESCE(EXCLUDED.refresh_token, social_connections.refresh_token),
-           token_expires_at = EXCLUDED.token_expires_at`,
+           token_expires_at = EXCLUDED.token_expires_at
+         RETURNING id, company_id, platform, connection_type, account_name, account_id`,
         [pending.companyId, tokens.access_token, tokens.refresh_token ?? '', expiresAt, pending.userId]
       )
+      await writeMutationAuditLog(c, {
+        table: 'social_connections', op: 'create', id: conn.id, after: conn, companyId: pending.companyId,
+      })
     }
 
     return c.redirect('/social?connected=true')
@@ -142,17 +151,23 @@ app.patch('/api/social/connections/:id', requireAuth, requireRole('ceo'), async 
   const companyIds = c.get('companyIds') as string[]
   const body = await c.req.json<{ organization_urn?: string; account_name?: string }>()
 
-  const existing = await query(`SELECT company_id FROM social_connections WHERE id = $1`, [id])
+  const existing = await query(`SELECT * FROM social_connections WHERE id = $1`, [id])
   if (existing.rows.length === 0) return c.json({ error: 'Not found' }, 404)
   if (!companyIds.includes(existing.rows[0].company_id)) return c.json({ error: 'Forbidden' }, 403)
   if (!body.organization_urn?.startsWith('urn:li:organization:')) {
     return c.json({ error: 'organization_urn must look like urn:li:organization:12345678' }, 400)
   }
+  const before = existing.rows[0]
 
-  await query(
-    `UPDATE social_connections SET account_id = $1, account_name = COALESCE($2, account_name) WHERE id = $3`,
+  const { rows: [after] } = await query(
+    `UPDATE social_connections SET account_id = $1, account_name = COALESCE($2, account_name) WHERE id = $3 RETURNING id, company_id, account_id, account_name`,
     [body.organization_urn, body.account_name ?? null, id]
   )
+
+  await writeMutationAuditLog(c, {
+    table: 'social_connections', op: 'update', id, before, after, companyId: before.company_id,
+  })
+
   return c.json({ ok: true })
 })
 
@@ -162,11 +177,17 @@ app.delete('/api/social/connections/:id', requireAuth, requireRole('ceo'), async
   const id = c.req.param('id') as string
   const companyIds = c.get('companyIds') as string[]
 
-  const existing = await query(`SELECT company_id FROM social_connections WHERE id = $1`, [id])
+  const existing = await query(`SELECT company_id, platform, connection_type, account_name FROM social_connections WHERE id = $1`, [id])
   if (existing.rows.length === 0) return c.json({ error: 'Not found' }, 404)
   if (!companyIds.includes(existing.rows[0].company_id)) return c.json({ error: 'Forbidden' }, 403)
+  const before = existing.rows[0]
 
   await query(`DELETE FROM social_connections WHERE id = $1`, [id])
+
+  await writeMutationAuditLog(c, {
+    table: 'social_connections', op: 'delete', id, before, companyId: before.company_id,
+  })
+
   return c.json({ ok: true })
 })
 
@@ -235,7 +256,13 @@ app.post('/api/social/posts', requireAuth, requireRole('ceo'), async (c) => {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
     [body.company_id, body.connection_id, body.content, body.media_url ?? null, body.ai_generated ?? false, body.source_type ?? 'manual', body.source_id ?? null, userId]
   )
-  return c.json({ post: result.rows[0] }, 201)
+  const post = result.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'social_posts', op: 'create', id: post.id, after: post, companyId: body.company_id,
+  })
+
+  return c.json({ post }, 201)
 })
 
 // ── POST /api/social/posts/generate ──────────────────────────────────────────
@@ -282,10 +309,11 @@ app.patch('/api/social/posts/:id', requireAuth, requireRole('ceo'), async (c) =>
   const companyIds = c.get('companyIds') as string[]
   const body = await c.req.json<{ content?: string; media_url?: string; scheduled_at?: string | null }>()
 
-  const existing = await query(`SELECT company_id, status FROM social_posts WHERE id = $1`, [id])
+  const existing = await query(`SELECT * FROM social_posts WHERE id = $1`, [id])
   if (existing.rows.length === 0) return c.json({ error: 'Not found' }, 404)
   if (!companyIds.includes(existing.rows[0].company_id)) return c.json({ error: 'Forbidden' }, 403)
   if (existing.rows[0].status === 'published') return c.json({ error: 'Cannot edit a published post' }, 400)
+  const before = existing.rows[0]
 
   const result = await query(
     `UPDATE social_posts SET
@@ -296,7 +324,13 @@ app.patch('/api/social/posts/:id', requireAuth, requireRole('ceo'), async (c) =>
      WHERE id = $4 RETURNING *`,
     [body.content ?? null, body.media_url ?? null, body.scheduled_at ?? null, id]
   )
-  return c.json({ post: result.rows[0] })
+  const post = result.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'social_posts', op: 'update', id, before, after: post, companyId: before.company_id,
+  })
+
+  return c.json({ post })
 })
 
 // ── DELETE /api/social/posts/:id ─────────────────────────────────────────────
@@ -305,11 +339,17 @@ app.delete('/api/social/posts/:id', requireAuth, requireRole('ceo'), async (c) =
   const id = c.req.param('id') as string
   const companyIds = c.get('companyIds') as string[]
 
-  const existing = await query(`SELECT company_id FROM social_posts WHERE id = $1`, [id])
+  const existing = await query(`SELECT * FROM social_posts WHERE id = $1`, [id])
   if (existing.rows.length === 0) return c.json({ error: 'Not found' }, 404)
   if (!companyIds.includes(existing.rows[0].company_id)) return c.json({ error: 'Forbidden' }, 403)
+  const before = existing.rows[0]
 
   await query(`DELETE FROM social_posts WHERE id = $1`, [id])
+
+  await writeMutationAuditLog(c, {
+    table: 'social_posts', op: 'delete', id, before, companyId: before.company_id,
+  })
+
   return c.json({ ok: true })
 })
 
@@ -339,10 +379,25 @@ app.post('/api/social/posts/:id/publish', requireAuth, requireRole('ceo'), async
       `UPDATE social_posts SET status = 'published', published_at = NOW(), external_post_urn = $1, error_message = NULL WHERE id = $2 RETURNING *`,
       [postUrn, id]
     )
-    return c.json({ post: updated.rows[0] })
+    const publishedPost = updated.rows[0]
+
+    await writeMutationAuditLog(c, {
+      table: 'social_posts', op: 'update', id,
+      before: { status: post.status }, after: { status: 'published', external_post_urn: postUrn },
+      companyId: post.company_id,
+    })
+
+    return c.json({ post: publishedPost })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Publish failed'
     await query(`UPDATE social_posts SET status = 'failed', error_message = $1 WHERE id = $2`, [msg.slice(0, 500), id])
+
+    await writeMutationAuditLog(c, {
+      table: 'social_posts', op: 'update', id,
+      before: { status: post.status }, after: { status: 'failed', error_message: msg.slice(0, 500) },
+      companyId: post.company_id,
+    })
+
     return c.json({ error: msg }, 502)
   }
 })

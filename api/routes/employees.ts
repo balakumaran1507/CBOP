@@ -3,6 +3,7 @@ import { requireAuth } from '../middleware/require-auth'
 import { requireRole } from '../middleware/require-role'
 import { query } from '../lib/db'
 import { sendEmail } from '../lib/mailer'
+import { writeMutationAuditLog } from '../lib/audit-log'
 import '../lib/hono-vars'
 
 const app = new Hono()
@@ -183,8 +184,13 @@ app.post('/api/employees', requireAuth, requireRole('ceo', 'coo', 'cto'), async 
       notes         || null,
     ]
   )
+  const employee = result.rows[0]
 
-  return c.json({ employee: result.rows[0] }, 201)
+  await writeMutationAuditLog(c, {
+    table: 'employees', op: 'create', id: employee.id, after: employee, companyId: company_id,
+  })
+
+  return c.json({ employee }, 201)
 })
 
 // ── GET /api/employees/:id ────────────────────────────────────────────────────
@@ -227,12 +233,13 @@ app.patch('/api/employees/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), a
 
   // Verify employee is in scope
   const existing = await query(
-    `SELECT id, company_id FROM employees WHERE id = $1 AND company_id = ANY($2)`,
+    `SELECT * FROM employees WHERE id = $1 AND company_id = ANY($2)`,
     [id, companyIds]
   )
   if (existing.rows.length === 0) return c.json({ error: 'Employee not found' }, 404)
 
-  const companyId = existing.rows[0].company_id as string
+  const before = existing.rows[0]
+  const companyId = before.company_id as string
 
   // Validate department if changing
   if (body.department_id) {
@@ -280,8 +287,13 @@ app.patch('/api/employees/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), a
     `UPDATE employees SET ${setClauses.join(', ')} WHERE id = $${params.length} RETURNING *`,
     params
   )
+  const employee = result.rows[0]
 
-  return c.json({ employee: result.rows[0] })
+  await writeMutationAuditLog(c, {
+    table: 'employees', op: 'update', id, before, after: employee, companyId,
+  })
+
+  return c.json({ employee })
 })
 
 // ── DELETE /api/employees/:id ─────────────────────────────────────────────────
@@ -292,15 +304,23 @@ app.delete('/api/employees/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), 
   const id         = c.req.param('id')
 
   const existing = await query(
-    `SELECT id FROM employees WHERE id = $1 AND company_id = ANY($2)`,
+    `SELECT * FROM employees WHERE id = $1 AND company_id = ANY($2)`,
     [id, companyIds]
   )
   if (existing.rows.length === 0) return c.json({ error: 'Employee not found' }, 404)
+  const before = existing.rows[0]
 
   await query(
     `UPDATE employees SET is_active = false, end_date = NOW()::date, updated_at = NOW() WHERE id = $1`,
     [id]
   )
+
+  await writeMutationAuditLog(c, {
+    table: 'employees', op: 'update', id,
+    before: { is_active: before.is_active, end_date: before.end_date },
+    after: { is_active: false, end_date: new Date().toISOString().slice(0, 10) },
+    companyId: before.company_id,
+  })
 
   return c.json({ ok: true })
 })
@@ -333,6 +353,13 @@ app.post('/api/employees/:id/offboard', requireAuth, requireRole('ceo', 'coo', '
      WHERE id = $3`,
     [endDate, body.notes || null, id]
   )
+
+  await writeMutationAuditLog(c, {
+    table: 'employees', op: 'update', id,
+    before: { is_active: emp.is_active, end_date: emp.end_date, notes: emp.notes },
+    after: { is_active: false, end_date: endDate, notes: body.notes || emp.notes },
+    companyId: emp.company_id,
+  })
 
   // Send offboarding notification email if the employee has an email
   if (emp.email) {

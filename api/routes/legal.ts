@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { requireAuth } from '../middleware/require-auth'
 import { requireRole } from '../middleware/require-role'
 import { query } from '../lib/db'
+import { writeMutationAuditLog } from '../lib/audit-log'
 import '../lib/hono-vars'
 
 const app = new Hono()
@@ -47,7 +48,13 @@ app.post('/api/legal/contracts', requireAuth, requireRole('ceo'), async (c) => {
     [company_id, title, counterparty ?? null, contract_type ?? 'contract', status ?? 'draft',
      effective_date ?? null, expiry_date ?? null, renewal_reminder_days ?? 30, notes ?? null]
   )
-  return c.json({ contract: result.rows[0] }, 201)
+  const contract = result.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'legal_contracts', op: 'create', id: contract.id, after: contract, companyId: company_id,
+  })
+
+  return c.json({ contract }, 201)
 })
 
 app.patch('/api/legal/contracts/:id', requireAuth, requireRole('ceo'), async (c) => {
@@ -55,9 +62,10 @@ app.patch('/api/legal/contracts/:id', requireAuth, requireRole('ceo'), async (c)
   const companyIds = c.get('companyIds') as string[]
   const body = await c.req.json()
 
-  const existing = await query(`SELECT company_id FROM legal_contracts WHERE id = $1`, [id])
+  const existing = await query(`SELECT * FROM legal_contracts WHERE id = $1`, [id])
   if (existing.rows.length === 0) return c.json({ error: 'Not found' }, 404)
   if (!companyIds.includes(existing.rows[0].company_id)) return c.json({ error: 'Forbidden' }, 403)
+  const before = existing.rows[0]
 
   const sets: string[] = []
   const params: unknown[] = []
@@ -70,17 +78,29 @@ app.patch('/api/legal/contracts/:id', requireAuth, requireRole('ceo'), async (c)
   params.push(id)
 
   const result = await query(`UPDATE legal_contracts SET ${sets.join(', ')} WHERE id = $${p} RETURNING *`, params)
-  return c.json({ contract: result.rows[0] })
+  const contract = result.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'legal_contracts', op: 'update', id, before, after: contract, companyId: before.company_id,
+  })
+
+  return c.json({ contract })
 })
 
 app.delete('/api/legal/contracts/:id', requireAuth, requireRole('ceo'), async (c) => {
   const id = c.req.param('id') as string
   const companyIds = c.get('companyIds') as string[]
-  const existing = await query(`SELECT company_id FROM legal_contracts WHERE id = $1`, [id])
+  const existing = await query(`SELECT * FROM legal_contracts WHERE id = $1`, [id])
   if (existing.rows.length === 0) return c.json({ error: 'Not found' }, 404)
   if (!companyIds.includes(existing.rows[0].company_id)) return c.json({ error: 'Forbidden' }, 403)
+  const before = existing.rows[0]
 
   await query(`DELETE FROM legal_contracts WHERE id = $1`, [id])
+
+  await writeMutationAuditLog(c, {
+    table: 'legal_contracts', op: 'delete', id, before, companyId: before.company_id,
+  })
+
   return c.json({ ok: true })
 })
 

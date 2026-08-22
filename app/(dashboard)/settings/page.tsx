@@ -48,6 +48,8 @@ interface SettingsCompany {
   upi_id: string | null
   bank_details: Record<string, string> | null
   invoice_prefix: string | null
+  quotation_prefix: string | null
+  invoice_terms: string | null
   address: string | null
   company_seal: string | null
   logo_initials: string | null
@@ -1283,6 +1285,7 @@ function EditCompanySlideOver({
 }) {
   const [form, setForm] = useState({
     name: '', type: '', gstin: '', upi_id: '', address: '', logo_initials: '', invoice_prefix: '',
+    quotation_prefix: '', invoice_terms: '',
     bank_name: '', account_name: '', account_number: '', ifsc: '', branch: '',
   })
   const [err, setErr] = useState('')
@@ -1291,13 +1294,15 @@ function EditCompanySlideOver({
     if (company) {
       const bd = (company.bank_details ?? {}) as Record<string, string>
       setForm({
-        name:           company.name,
-        type:           company.type ?? '',
-        gstin:          company.gstin ?? '',
-        upi_id:         company.upi_id ?? '',
-        address:        company.address ?? '',
-        logo_initials:  company.logo_initials ?? '',
-        invoice_prefix: company.invoice_prefix ?? '',
+        name:              company.name,
+        type:              company.type ?? '',
+        gstin:             company.gstin ?? '',
+        upi_id:            company.upi_id ?? '',
+        address:           company.address ?? '',
+        logo_initials:     company.logo_initials ?? '',
+        invoice_prefix:    company.invoice_prefix ?? '',
+        quotation_prefix:  company.quotation_prefix ?? '',
+        invoice_terms:     company.invoice_terms ?? '',
         bank_name:      bd.bank_name ?? bd.bank ?? '',
         account_name:   bd.account_name ?? bd.name ?? '',
         account_number: bd.account_number ?? bd.account ?? '',
@@ -1315,6 +1320,7 @@ function EditCompanySlideOver({
         ? { bank_name: data.bank_name, account_name: data.account_name, account_number: data.account_number, ifsc: data.ifsc, branch: data.branch }
         : undefined
       const prefixChanged = data.invoice_prefix.trim().toUpperCase() !== (company!.invoice_prefix ?? '')
+      const quotationPrefixChanged = data.quotation_prefix.trim().toUpperCase() !== (company!.quotation_prefix ?? '')
       return fetch(`/api/settings/companies/${company!.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -1328,6 +1334,8 @@ function EditCompanySlideOver({
           address: data.address,
           logo_initials: data.logo_initials,
           invoice_prefix: prefixChanged ? data.invoice_prefix.trim().toUpperCase() : undefined,
+          quotation_prefix: quotationPrefixChanged ? data.quotation_prefix.trim().toUpperCase() : undefined,
+          invoice_terms: data.invoice_terms,
         }),
       }).then(async (r) => {
         if (!r.ok) { const j = await r.json(); throw new Error(j.error || 'Failed') }
@@ -1400,6 +1408,18 @@ function EditCompanySlideOver({
           Locked once this company has invoices - changing it afterwards would break the numbering sequence.
         </p>
       </Field>
+      <Field label="Quotation Number Prefix">
+        <input
+          style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
+          value={form.quotation_prefix}
+          onChange={(e) => setForm({ ...form, quotation_prefix: e.target.value.toUpperCase() })}
+          placeholder="ETH-QUO"
+          maxLength={16}
+        />
+        <p className="mt-1 text-xs" style={{ color: 'var(--text3)' }}>
+          Used for quotation numbers, e.g. {form.quotation_prefix || 'ETH-QUO'}-2026-0001.
+        </p>
+      </Field>
       <Field label="Type">
         <select style={selectStyle} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
           <option value="">- select -</option>
@@ -1465,6 +1485,18 @@ function EditCompanySlideOver({
         />
         <p className="mt-1 text-xs" style={{ color: 'var(--text3)' }}>
           2–3 characters shown in the logo circle. Leave blank to auto-generate from company name.
+        </p>
+      </Field>
+      <Field label="Invoice Terms & Conditions">
+        <textarea
+          value={form.invoice_terms}
+          onChange={(e) => setForm({ ...form, invoice_terms: e.target.value })}
+          placeholder={'1. Payment due within 14 days of invoice date.\n2. Late payments subject to 1.5% monthly interest.\n3. Disputes subject to Chennai jurisdiction.\n4. This is a system-generated tax invoice.'}
+          rows={5}
+          style={{ ...inputStyle, height: 'auto', padding: '8px 10px', resize: 'vertical' }}
+        />
+        <p className="mt-1 text-xs" style={{ color: 'var(--text3)' }}>
+          Default terms shown on this company&apos;s invoices and quotations. Can still be overridden per-document.
         </p>
       </Field>
       <CompanySealUpload company={company} onUploaded={() => onSuccess()} />

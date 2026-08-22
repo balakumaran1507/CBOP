@@ -5,6 +5,7 @@ import { query } from '../lib/db'
 import { generateLocalBusinessJsonLd, checkNapCompleteness } from '../lib/local-business-schema'
 import * as fs from 'fs'
 import * as path from 'path'
+import { writeMutationAuditLog } from '../lib/audit-log'
 import '../lib/hono-vars'
 
 const app = new Hono()
@@ -75,8 +76,13 @@ app.put('/api/site-settings/:companyId', requireAuth, requireRole('ceo'), async 
       JSON.stringify(hours ?? {}), JSON.stringify(social_links ?? []),
     ]
   )
+  const settings = result.rows[0]
 
-  return c.json({ settings: result.rows[0] })
+  await writeMutationAuditLog(c, {
+    table: 'site_settings', op: 'update', id: settings.id ?? companyId, after: settings, companyId,
+  })
+
+  return c.json({ settings })
 })
 
 // ── GET /api/site-settings/:companyId/jsonld ─────────────────────────────────
@@ -167,6 +173,10 @@ app.post('/api/site-settings/:companyId/favicon', requireAuth, requireRole('ceo'
     [companyId, url]
   )
 
+  await writeMutationAuditLog(c, {
+    table: 'site_settings', op: 'update', id: companyId, after: { favicon_url: url }, companyId,
+  })
+
   return c.json({ favicon_url: url })
 })
 
@@ -198,7 +208,13 @@ app.post('/api/site-settings/:companyId/team', requireAuth, requireRole('ceo'), 
      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
     [companyId, name.trim(), title ?? null, photo_url ?? null, bio ?? null, email ?? null, display_order ?? 0]
   )
-  return c.json({ member: result.rows[0] }, 201)
+  const member = result.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'site_team_members', op: 'create', id: member.id, after: member, companyId,
+  })
+
+  return c.json({ member }, 201)
 })
 
 app.patch('/api/site-settings/team/:id', requireAuth, requireRole('ceo'), async (c) => {
@@ -206,9 +222,10 @@ app.patch('/api/site-settings/team/:id', requireAuth, requireRole('ceo'), async 
   const companyIds = c.get('companyIds') as string[]
   const body = await c.req.json()
 
-  const existing = await query(`SELECT company_id FROM site_team_members WHERE id = $1`, [id])
+  const existing = await query(`SELECT * FROM site_team_members WHERE id = $1`, [id])
   if (existing.rows.length === 0) return c.json({ error: 'Not found' }, 404)
   if (!companyIds.includes(existing.rows[0].company_id)) return c.json({ error: 'Forbidden' }, 403)
+  const before = existing.rows[0]
 
   const fields: string[] = []
   const values: unknown[] = []
@@ -220,18 +237,30 @@ app.patch('/api/site-settings/team/:id', requireAuth, requireRole('ceo'), async 
   values.push(id)
 
   const result = await query(`UPDATE site_team_members SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`, values)
-  return c.json({ member: result.rows[0] })
+  const member = result.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'site_team_members', op: 'update', id, before, after: member, companyId: before.company_id,
+  })
+
+  return c.json({ member })
 })
 
 app.delete('/api/site-settings/team/:id', requireAuth, requireRole('ceo'), async (c) => {
   const id = c.req.param('id') as string
   const companyIds = c.get('companyIds') as string[]
 
-  const existing = await query(`SELECT company_id FROM site_team_members WHERE id = $1`, [id])
+  const existing = await query(`SELECT * FROM site_team_members WHERE id = $1`, [id])
   if (existing.rows.length === 0) return c.json({ error: 'Not found' }, 404)
   if (!companyIds.includes(existing.rows[0].company_id)) return c.json({ error: 'Forbidden' }, 403)
+  const before = existing.rows[0]
 
   await query(`DELETE FROM site_team_members WHERE id = $1`, [id])
+
+  await writeMutationAuditLog(c, {
+    table: 'site_team_members', op: 'delete', id, before, companyId: before.company_id,
+  })
+
   return c.json({ ok: true })
 })
 
@@ -242,6 +271,7 @@ app.post('/api/site-settings/team/:id/photo', requireAuth, requireRole('ceo'), a
   const existing = await query(`SELECT company_id FROM site_team_members WHERE id = $1`, [id])
   if (existing.rows.length === 0) return c.json({ error: 'Not found' }, 404)
   if (!companyIds.includes(existing.rows[0].company_id)) return c.json({ error: 'Forbidden' }, 403)
+  const companyId = existing.rows[0].company_id
 
   const formData = await c.req.formData()
   const file = formData.get('file') as File | null
@@ -260,6 +290,10 @@ app.post('/api/site-settings/team/:id/photo', requireAuth, requireRole('ceo'), a
 
   const url = `/api/uploads/site-settings/${fname}`
   await query(`UPDATE site_team_members SET photo_url = $1 WHERE id = $2`, [url, id])
+
+  await writeMutationAuditLog(c, {
+    table: 'site_team_members', op: 'update', id, after: { photo_url: url }, companyId,
+  })
 
   return c.json({ photo_url: url })
 })

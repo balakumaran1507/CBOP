@@ -62,33 +62,61 @@ function esc(str: string | null | undefined): string {
     .replace(/"/g, '&quot;')
 }
 
+/**
+ * Escapes an address for display and makes it read as multiple lines: a
+ * stored newline is respected (white-space: pre-line on the containing
+ * element handles that), and a single-line address with no newline is
+ * soft-wrapped on ", " so long addresses don't run into an unreadable blob.
+ */
+function formatAddressHtml(addr: string | null | undefined): string {
+  if (!addr) return ''
+  const escaped = esc(addr)
+  if (escaped.includes('\n')) return escaped
+  return escaped.split(/,\s*/).join(',<br/>')
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
+
+interface InvoiceItemRow {
+  description: string
+  hsn_code: string | null
+  quantity: string | number
+  unit_price: string | number
+  discount_type: 'flat' | 'percent' | null
+  discount_value: string | number
+  amount: string | number
+}
 
 export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   const result = await query(`
     SELECT
       i.id,
       i.invoice_no,
-      i.created_at::DATE AS invoice_date,
+      i.doc_type,
+      i.invoice_date,
       i.supply_date,
       i.due_date,
+      i.valid_until,
       i.paid_at,
       i.status,
       i.amount,
-      i.rate,
-      i.quantity,
       i.gst_type,
+      i.gst_mode,
+      i.gst_rate,
       i.gst_amount,
       i.total,
-      i.service_description,
-      i.notes,
       i.hsn_code,
       i.reverse_charge,
       i.e_way_bill_no,
-      i.machine_data,
       i.po_number,
       i.discount_amount,
+      i.round_off,
       i.balance_due,
+      i.payment_terms_label,
+      i.terms_conditions,
+      i.place_of_supply,
+      i.show_company_gstin,
+      i.client_gstin_override,
 
       c.name            AS company_name,
       c.gstin           AS company_gstin,
@@ -96,7 +124,7 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
       c.upi_id          AS company_upi,
       c.bank_details    AS bank_details,
       c.logo_url        AS company_logo,
-      c.invoice_terms   AS invoice_terms,
+      c.invoice_terms   AS company_invoice_terms,
       c.address         AS company_address,
       c.company_seal    AS company_seal,
       c.logo_initials   AS logo_initials,
@@ -118,6 +146,13 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   const inv = result.rows[0]
   if (!inv) throw new Error(`Invoice ${invoiceId} not found`)
 
+  const itemsResult = await query<InvoiceItemRow>(
+    `SELECT description, hsn_code, quantity, unit_price, discount_type, discount_value, amount
+     FROM sales_invoice_items WHERE invoice_id = $1 ORDER BY sort_order ASC`,
+    [invoiceId]
+  )
+  const items = itemsResult.rows
+
   const theme = typeof inv.theme === 'string' ? JSON.parse(inv.theme) : inv.theme
   const bank  = typeof inv.bank_details === 'string' ? JSON.parse(inv.bank_details) : inv.bank_details
 
@@ -126,25 +161,27 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   // value can't break out of the style tag (e.g. "...} </style><script>...").
   const themePrimary = esc(String(theme?.primary || '#2B6EF5'))
 
+  const isQuotation = inv.doc_type === 'quotation'
+  const showTax     = inv.gst_mode !== 'none'
+
   // -- Computed values
-  const taxableAmount = parseFloat(String(inv.amount))
-  const gstAmount     = parseFloat(String(inv.gst_amount))
-  const total         = parseFloat(String(inv.total))
-  const rounding      = parseFloat((total - (taxableAmount + gstAmount)).toFixed(2))
-  const isCGST        = inv.gst_type === 'cgst_sgst'
-  const cgst          = isCGST ? gstAmount / 2 : 0
-  const sgst          = isCGST ? gstAmount / 2 : 0
-  const igst          = !isCGST ? gstAmount : 0
-  const rate          = parseFloat(String(inv.rate || inv.amount))
-  const qty           = parseFloat(String(inv.quantity || 1))
-  const isPaid        = inv.status === 'paid'
-  const isOverdue     = inv.status === 'overdue'
-  const discount      = parseFloat(String(inv.discount_amount || 0))
-  const balanceDue    = parseFloat(String(inv.balance_due || total))
+  const subtotal      = items.reduce((sum, it) => sum + parseFloat(String(it.amount)), 0)
+  const discount       = parseFloat(String(inv.discount_amount || 0))
+  const taxableAmount  = parseFloat(String(inv.amount))
+  const gstAmount      = parseFloat(String(inv.gst_amount || 0))
+  const total          = parseFloat(String(inv.total))
+  const rounding       = parseFloat((total - (taxableAmount + gstAmount)).toFixed(2))
+  const isCGST         = inv.gst_type === 'cgst_sgst'
+  const cgst           = showTax && isCGST  ? gstAmount / 2 : 0
+  const sgst           = showTax && isCGST  ? gstAmount / 2 : 0
+  const igst           = showTax && !isCGST ? gstAmount     : 0
+  const gstRate        = parseFloat(String(inv.gst_rate || 18))
+  const isPaid         = inv.status === 'paid'
+  const balanceDue     = parseFloat(String(inv.balance_due || total))
 
   const fmt     = (n: number) => '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   const fmtDate = (d: any) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'
-  const placeOfSupply = 'Tamil Nadu (33)'
+  const hasItemDiscounts = items.some((it) => parseFloat(String(it.discount_value || 0)) > 0)
 
   // Logo / seal: resolve to a safe path inside uploads/ - never use raw DB value as fs path
   const UPLOADS_DIR = path.join(process.cwd(), 'uploads')
@@ -189,17 +226,24 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
       .slice(0, 2)
       .toUpperCase()
 
-  // QR codes
+  // Payment QR - quotations have nothing to pay yet, so this is invoice-only.
+  // Generated at a larger module size / stronger error correction than before
+  // so it actually scans reliably at print size (previously width:100 →
+  // rendered at 88px, too fine-grained to read on most phone cameras).
   let upiQR = ''
-  if (inv.company_upi) {
+  if (!isQuotation && inv.company_upi) {
     const upiString = `upi://pay?pa=${inv.company_upi}&pn=${encodeURIComponent(inv.company_name)}&am=${total}&cu=INR&tn=${inv.invoice_no}`
-    upiQR = await QRCode.toDataURL(upiString, { width: 100, margin: 1 })
+    upiQR = await QRCode.toDataURL(upiString, { width: 240, margin: 2, errorCorrectionLevel: 'M' })
   }
-  const agentData = JSON.stringify({ inv: inv.invoice_no, amt: total, due: inv.due_date, status: inv.status, gstin: inv.company_gstin })
-  const agentQR   = await QRCode.toDataURL(agentData, { width: 64, margin: 1, color: { dark: theme.primary, light: '#FFFFFF' } })
 
-  const terms = (inv.invoice_terms as string | null) ||
+  const terms = (inv.terms_conditions as string | null) ||
+    (inv.company_invoice_terms as string | null) ||
     `1. Payment due within 14 days of invoice date.\n2. Late payments subject to 1.5% monthly interest.\n3. Disputes subject to Chennai jurisdiction.\n4. This is a system-generated tax invoice.`
+
+  const showCompanyGstin = inv.show_company_gstin !== false && !!inv.company_gstin
+  const clientGstin       = (inv.client_gstin_override as string | null) || (inv.client_gstin as string | null)
+  const placeOfSupply     = (inv.place_of_supply as string | null) || ''
+  const paymentTermsLabel = (inv.payment_terms_label as string | null) || 'Net 14'
 
   // -- HTML template (inline CSS only - Puppeteer does not load external stylesheets)
   const html = `<!DOCTYPE html>
@@ -228,7 +272,7 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
     font-size: 9.5pt;
     color: #2D2D2D;
     background: #FFFFFF;
-    padding: 36px 40px 48px 40px;
+    padding: 42px 46px 52px 46px;
   }
 
   /* ── HEADER ── */
@@ -236,20 +280,20 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    margin-bottom: 32px;
+    margin-bottom: 38px;
     page-break-inside: avoid;
   }
 
   .company-block {
     display: flex;
     align-items: flex-start;
-    gap: 14px;
+    gap: 16px;
   }
 
   .logo-circle {
-    width: 52px;
-    height: 52px;
-    border-radius: 50%;
+    width: 54px;
+    height: 54px;
+    border-radius: 14px;
     background: ${themePrimary};
     display: flex;
     align-items: center;
@@ -258,31 +302,38 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   }
 
   .logo-circle img {
-    width: 36px;
-    height: 36px;
+    width: 54px;
+    height: 54px;
     object-fit: contain;
-    border-radius: 50%;
+    border-radius: 14px;
+    background: #FFFFFF;
   }
 
   .logo-circle .initials {
     color: #FFFFFF;
-    font-size: 18pt;
+    font-size: 17pt;
     font-weight: 700;
     letter-spacing: -0.02em;
   }
 
   .company-info .company-name {
-    font-size: 13pt;
+    font-size: 13.5pt;
     font-weight: 700;
     color: #1A1A1A;
     line-height: 1.2;
   }
 
   .company-info .company-detail {
+    font-size: 9.5pt;
+    color: #666666;
+    margin-top: 4px;
+    line-height: 1.65;
+  }
+
+  .company-info .company-compliance {
     font-size: 8pt;
-    color: #777777;
-    margin-top: 3px;
-    line-height: 1.6;
+    color: #999999;
+    margin-top: 4px;
   }
 
   .invoice-title-block {
@@ -290,44 +341,48 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   }
 
   .invoice-title-block .invoice-word {
-    font-size: 22pt;
+    font-size: 21pt;
     font-weight: 700;
     color: #1A1A1A;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.08em;
     line-height: 1;
   }
 
   .invoice-title-block .invoice-number {
-    font-size: 9pt;
+    font-size: 9.5pt;
     color: #777777;
-    margin-top: 4px;
+    margin-top: 6px;
+    font-family: 'Inter', monospace;
   }
 
   .invoice-title-block .balance-due-label {
     font-size: 8pt;
-    color: #777777;
-    margin-top: 10px;
+    color: #999999;
+    margin-top: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
   }
 
   .invoice-title-block .balance-due-amount {
-    font-size: 18pt;
+    font-size: 19pt;
     font-weight: 700;
-    color: #1A1A1A;
+    color: ${themePrimary};
     margin-top: 2px;
   }
 
   /* ── DIVIDER ── */
   .divider {
     border: none;
-    border-top: 1.5px solid #E8E8E8;
-    margin: 0 0 24px 0;
+    border-top: 1.5px solid #EBEBEB;
+    margin: 0 0 26px 0;
   }
 
   /* ── BILL TO + INVOICE DETAILS ── */
   .meta-section {
     display: flex;
     justify-content: space-between;
-    margin-bottom: 20px;
+    gap: 24px;
+    margin-bottom: 18px;
     page-break-inside: avoid;
   }
 
@@ -337,24 +392,24 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
 
   .block-label {
     font-size: 7.5pt;
-    font-weight: 600;
+    font-weight: 700;
     color: #AAAAAA;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
-    margin-bottom: 8px;
+    letter-spacing: 0.12em;
+    margin-bottom: 9px;
   }
 
   .bill-to-name {
-    font-size: 11pt;
+    font-size: 11.5pt;
     font-weight: 700;
     color: #1A1A1A;
-    margin-bottom: 3px;
+    margin-bottom: 4px;
   }
 
   .bill-to-detail {
-    font-size: 8.5pt;
+    font-size: 9.5pt;
     color: #555555;
-    line-height: 1.65;
+    line-height: 1.7;
   }
 
   .bill-to-gstin {
@@ -363,20 +418,21 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
     font-weight: 600;
     color: #444444;
     background: #F5F5F5;
-    padding: 2px 8px;
-    margin-top: 5px;
+    border-radius: 4px;
+    padding: 3px 9px;
+    margin-top: 7px;
   }
 
   .invoice-details-block {
-    width: 220px;
+    width: 230px;
     flex-shrink: 0;
   }
 
   .detail-row {
     display: flex;
     justify-content: space-between;
-    margin-bottom: 5px;
-    font-size: 8.5pt;
+    margin-bottom: 6px;
+    font-size: 8.75pt;
   }
 
   .detail-label {
@@ -390,22 +446,17 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
     text-align: right;
   }
 
-  /* ── PLACE OF SUPPLY ── */
-  .place-of-supply {
-    font-size: 8.5pt;
-    color: #555555;
-    margin-bottom: 20px;
-  }
-
-  /* ── COMPLIANCE STRIP ── */
+  /* ── PLACE OF SUPPLY / COMPLIANCE ── */
   .compliance-strip {
     display: flex;
-    gap: 20px;
+    flex-wrap: wrap;
+    gap: 18px;
     background: #F8F8F8;
-    padding: 6px 12px;
-    margin-bottom: 20px;
-    font-size: 7.5pt;
-    color: #777777;
+    border-radius: 6px;
+    padding: 8px 14px;
+    margin-bottom: 22px;
+    font-size: 7.75pt;
+    color: #888888;
   }
 
   .compliance-strip span strong {
@@ -425,15 +476,14 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   }
 
   table.items thead th {
-    background: ${themePrimary};
-    color: #FFFFFF;
-    font-size: 8pt;
-    font-weight: 600;
+    border-bottom: 2px solid ${themePrimary};
+    color: #1A1A1A;
+    font-size: 7.5pt;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
-    padding: 9px 12px;
+    letter-spacing: 0.08em;
+    padding: 0 12px 8px 12px;
     text-align: right;
-    border: none;
   }
 
   table.items thead th:first-child,
@@ -447,20 +497,20 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   }
 
   table.items tbody tr:last-child {
-    border-bottom: 1.5px solid #E8E8E8;
+    border-bottom: 1.5px solid ${themePrimary};
   }
 
   table.items tbody td {
-    padding: 11px 12px;
+    padding: 12px 12px;
     vertical-align: top;
     font-size: 9pt;
   }
 
   table.items tbody td.item-num {
-    color: #AAAAAA;
+    color: #BBBBBB;
     font-size: 8.5pt;
     text-align: center;
-    width: 28px;
+    width: 26px;
   }
 
   table.items tbody td.item-desc {
@@ -470,13 +520,6 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   table.items tbody td.item-desc .item-title {
     font-weight: 600;
     color: #1A1A1A;
-  }
-
-  table.items tbody td.item-desc .item-sub {
-    font-size: 8pt;
-    color: #888888;
-    margin-top: 2px;
-    font-style: italic;
   }
 
   table.items tbody td.item-num-right {
@@ -492,29 +535,32 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
     font-size: 9pt;
   }
 
-  table.items tbody td.tax-cell {
+  table.items tbody td.discount-cell {
     text-align: right;
     font-size: 8.5pt;
-    color: #666666;
+    color: #C2680E;
   }
 
   /* ── TOTALS ── */
   .totals-section {
     display: flex;
     justify-content: flex-end;
-    margin-top: 0;
+    margin-top: 18px;
     page-break-inside: avoid;
   }
 
   .totals-block {
-    width: 260px;
-    margin-top: 4px;
+    width: 280px;
+    border: 1px solid #EEEEEE;
+    border-radius: 10px;
+    padding: 6px 0;
+    overflow: hidden;
   }
 
   .total-row {
     display: flex;
     justify-content: space-between;
-    padding: 5px 12px;
+    padding: 6px 16px;
     font-size: 9pt;
   }
 
@@ -529,12 +575,13 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
 
   .total-row.discount .t-label,
   .total-row.discount .t-value {
-    color: #E05C2A;
+    color: #C2680E;
   }
 
   .total-row.grand-total {
     background: #1A1A1A;
     margin-top: 4px;
+    padding: 11px 16px;
   }
 
   .total-row.grand-total .t-label {
@@ -546,12 +593,12 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   .total-row.grand-total .t-value {
     color: #FFFFFF;
     font-weight: 700;
-    font-size: 11pt;
+    font-size: 12pt;
   }
 
   .total-row.balance-due-row {
-    background: #F5F5F5;
-    margin-top: 2px;
+    background: ${themePrimary}14;
+    padding: 9px 16px;
   }
 
   .total-row.balance-due-row .t-label {
@@ -566,34 +613,34 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
 
   /* ── WORDS + PAYMENT ── */
   .bottom-section {
-    margin-top: 24px;
+    margin-top: 28px;
     page-break-inside: avoid;
   }
 
   .words-row {
-    font-size: 8.5pt;
+    font-size: 8.75pt;
     color: #555555;
-    margin-bottom: 20px;
-    padding: 8px 12px;
+    margin-bottom: 22px;
+    padding: 10px 14px;
     background: #F8F8F8;
+    border-radius: 6px;
     border-left: 3px solid ${themePrimary};
   }
 
   .words-row strong {
-    color: #1A1A1A;
     display: block;
-    margin-bottom: 2px;
+    margin-bottom: 3px;
     font-size: 7.5pt;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.1em;
     color: #AAAAAA;
-    font-weight: 600;
+    font-weight: 700;
   }
 
   .payment-row {
     display: flex;
-    gap: 24px;
-    margin-bottom: 20px;
+    gap: 28px;
+    margin-bottom: 22px;
     align-items: flex-start;
   }
 
@@ -602,13 +649,13 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   }
 
   .payment-details .block-label {
-    margin-bottom: 6px;
+    margin-bottom: 7px;
   }
 
   .payment-line {
-    font-size: 8.5pt;
+    font-size: 8.75pt;
     color: #555555;
-    line-height: 1.8;
+    line-height: 1.85;
   }
 
   .payment-line strong {
@@ -629,13 +676,14 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   .qr-item img {
     display: block;
     border: 1px solid #EEEEEE;
+    border-radius: 6px;
   }
 
   .qr-caption {
     font-size: 6.5pt;
     color: #AAAAAA;
     text-align: center;
-    margin-top: 3px;
+    margin-top: 4px;
     text-transform: uppercase;
     letter-spacing: 0.08em;
   }
@@ -644,7 +692,7 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   .footer-row {
     display: flex;
     gap: 24px;
-    margin-top: 4px;
+    margin-top: 6px;
     page-break-inside: avoid;
   }
 
@@ -653,10 +701,10 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   }
 
   .notes-text {
-    font-size: 8.5pt;
+    font-size: 8.75pt;
     color: #555555;
-    line-height: 1.65;
-    margin-top: 4px;
+    line-height: 1.7;
+    margin-top: 5px;
   }
 
   .terms-block {
@@ -666,19 +714,22 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   .terms-text {
     font-size: 8pt;
     color: #777777;
-    line-height: 1.7;
-    margin-top: 4px;
+    line-height: 1.75;
+    margin-top: 5px;
     white-space: pre-line;
   }
 
   .signature-block {
-    width: 180px;
+    width: 190px;
     flex-shrink: 0;
     text-align: center;
+    border: 1px solid #EEEEEE;
+    border-radius: 8px;
+    padding: 12px 10px 10px 10px;
   }
 
   .signature-space {
-    height: 56px;
+    height: 52px;
     margin-bottom: 6px;
     display: flex;
     align-items: flex-end;
@@ -686,33 +737,37 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
   }
 
   .signature-space img {
-    max-height: 52px;
+    max-height: 50px;
     max-width: 120px;
     object-fit: contain;
-    opacity: 0.82;
+    opacity: 0.85;
   }
 
   .signature-line {
     border-bottom: 1.5px solid #2D2D2D;
-    margin-bottom: 5px;
+    margin-bottom: 6px;
   }
 
   .signature-label {
-    font-size: 7.5pt;
-    color: #777777;
+    font-size: 7.75pt;
+    font-weight: 600;
+    color: #555555;
     text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
   }
 
   .for-company {
-    font-size: 7.5pt;
-    color: #AAAAAA;
-    margin-bottom: 8px;
+    font-size: 8pt;
+    font-weight: 600;
+    color: #1A1A1A;
+    margin-bottom: 10px;
   }
 
   /* ── AUDIT FOOTER ── */
   .audit-footer {
-    margin-top: 20px;
-    padding-top: 8px;
+    margin-top: 22px;
+    padding-top: 9px;
     border-top: 1px solid #F0F0F0;
     display: flex;
     justify-content: space-between;
@@ -720,7 +775,7 @@ export async function buildInvoicePdf(invoiceId: string): Promise<Buffer> {
     color: #CCCCCC;
   }
 
-  /* ── PAID WATERMARK ── */
+  /* ── PAID / QUOTATION WATERMARK ── */
   ${isPaid ? `
   .paid-stamp {
     position: fixed;
@@ -751,18 +806,21 @@ ${isPaid ? '<div class="paid-stamp">PAID</div>' : ''}
     </div>
     <div class="company-info">
       <div class="company-name">${esc(inv.company_name)}</div>
-      ${inv.company_address ? `<div class="company-detail">${esc(inv.company_address)}</div>` : ''}
-      <div class="company-detail">
-        ${inv.company_gstin ? `GSTIN: ${esc(inv.company_gstin)}` : ''}
-        ${inv.company_pan ? ` &nbsp;·&nbsp; PAN: ${esc(inv.company_pan)}` : ''}
-      </div>
+      ${inv.company_address ? `<div class="company-detail" style="white-space:pre-line;">${formatAddressHtml(inv.company_address as string)}</div>` : ''}
+      ${(showCompanyGstin || inv.company_pan) ? `<div class="company-compliance">
+        ${showCompanyGstin ? `GSTIN: ${esc(inv.company_gstin)}` : ''}
+        ${showCompanyGstin && inv.company_pan ? ' &nbsp;·&nbsp; ' : ''}
+        ${inv.company_pan ? `PAN: ${esc(inv.company_pan)}` : ''}
+      </div>` : ''}
     </div>
   </div>
   <div class="invoice-title-block">
-    <div class="invoice-word">TAX INVOICE</div>
-    <div class="invoice-number"># ${inv.invoice_no}</div>
+    <div class="invoice-word">${isQuotation ? 'QUOTATION' : 'TAX INVOICE'}</div>
+    <div class="invoice-number"># ${esc(inv.invoice_no)}</div>
+    ${!isQuotation ? `
     <div class="balance-due-label">Balance Due</div>
     <div class="balance-due-amount">${fmt(balanceDue)}</div>
+    ` : ''}
   </div>
 </div>
 
@@ -771,31 +829,38 @@ ${isPaid ? '<div class="paid-stamp">PAID</div>' : ''}
 <!-- ═══ BILL TO + INVOICE DETAILS ═══ -->
 <div class="meta-section">
   <div class="bill-to-block">
-    <div class="block-label">Bill To</div>
+    <div class="block-label">${isQuotation ? 'Quoted To' : 'Bill To'}</div>
     <div class="bill-to-name">${esc(inv.client_name)}</div>
     ${inv.client_org ? `<div class="bill-to-detail">${esc(inv.client_org)}</div>` : ''}
-    ${inv.client_address ? `<div class="bill-to-detail">${esc(inv.client_address)}</div>` : ''}
+    ${inv.client_address ? `<div class="bill-to-detail" style="white-space:pre-line;">${formatAddressHtml(inv.client_address as string)}</div>` : ''}
     ${inv.client_email ? `<div class="bill-to-detail">${esc(inv.client_email)}</div>` : ''}
     ${inv.client_phone ? `<div class="bill-to-detail">${esc(inv.client_phone)}</div>` : ''}
-    ${inv.client_gstin ? `<div class="bill-to-gstin">GSTIN: ${esc(inv.client_gstin)}</div>` : ''}
+    ${clientGstin ? `<div class="bill-to-gstin">GSTIN: ${esc(clientGstin)}</div>` : ''}
   </div>
   <div class="invoice-details-block">
     <div class="detail-row">
-      <span class="detail-label">Invoice Date</span>
+      <span class="detail-label">${isQuotation ? 'Quotation Date' : 'Invoice Date'}</span>
       <span class="detail-value">${fmtDate(inv.invoice_date)}</span>
     </div>
     <div class="detail-row">
       <span class="detail-label">Supply Date</span>
       <span class="detail-value">${fmtDate(inv.supply_date)}</span>
     </div>
+    ${!isQuotation ? `
     <div class="detail-row">
       <span class="detail-label">Terms</span>
-      <span class="detail-value">Net 14</span>
+      <span class="detail-value">${esc(paymentTermsLabel)}</span>
     </div>
     <div class="detail-row">
       <span class="detail-label">Due Date</span>
       <span class="detail-value">${fmtDate(inv.due_date)}</span>
     </div>
+    ` : `
+    <div class="detail-row">
+      <span class="detail-label">Valid Until</span>
+      <span class="detail-value">${fmtDate(inv.valid_until)}</span>
+    </div>
+    `}
     ${inv.po_number ? `
     <div class="detail-row">
       <span class="detail-label">P.O. #</span>
@@ -805,51 +870,45 @@ ${isPaid ? '<div class="paid-stamp">PAID</div>' : ''}
 </div>
 
 <!-- ═══ PLACE OF SUPPLY + COMPLIANCE ═══ -->
-<div class="place-of-supply">Place of Supply: <strong>Tamil Nadu (33)</strong></div>
-
+${(placeOfSupply || !isQuotation) ? `
 <div class="compliance-strip">
-  <span>GST Type: <strong>${isCGST ? 'CGST + SGST' : 'IGST'}</strong></span>
-  <span>Reverse Charge: <strong>${inv.reverse_charge ? 'Yes' : 'No'}</strong></span>
+  ${placeOfSupply ? `<span>Place of Supply: <strong>${esc(placeOfSupply)}</strong></span>` : ''}
+  <span>GST: <strong>${showTax ? (isCGST ? 'CGST + SGST' : 'IGST') + ` (${gstRate}%)` : 'Not Applicable'}</strong></span>
+  ${!isQuotation ? `<span>Reverse Charge: <strong>${inv.reverse_charge ? 'Yes' : 'No'}</strong></span>` : ''}
   ${inv.e_way_bill_no ? `<span>E-Way Bill: <strong>${esc(inv.e_way_bill_no)}</strong></span>` : ''}
-</div>
+</div>` : ''}
 
 <!-- ═══ LINE ITEMS ═══ -->
 <table class="items">
   <thead>
     <tr>
-      <th style="text-align:center;width:32px">#</th>
+      <th style="text-align:center;width:28px">#</th>
       <th style="text-align:left;">Item &amp; Description</th>
-      <th style="width:60px">HSN/SAC</th>
+      <th style="width:64px">HSN/SAC</th>
       <th style="width:50px">Qty</th>
-      <th style="width:80px">Rate</th>
-      ${isCGST ? `
-      <th style="width:70px">CGST</th>
-      <th style="width:70px">SGST</th>
-      ` : `
-      <th style="width:70px">IGST</th>
-      `}
-      ${discount > 0 ? `<th style="width:70px">Discount</th>` : ''}
-      <th style="width:90px">Amount</th>
+      <th style="width:85px">Rate</th>
+      ${hasItemDiscounts ? `<th style="width:75px">Discount</th>` : ''}
+      <th style="width:95px">Amount</th>
     </tr>
   </thead>
   <tbody>
+    ${items.map((item, idx) => {
+      const qty  = parseFloat(String(item.quantity))
+      const rate = parseFloat(String(item.unit_price))
+      const amt  = parseFloat(String(item.amount))
+      const disc = parseFloat(String(item.discount_value || 0))
+      const discLabel = item.discount_type === 'percent' ? `${disc}%` : fmt(disc)
+      return `
     <tr>
-      <td class="item-num">1</td>
-      <td class="item-desc">
-        <div class="item-title">${esc(inv.service_description) || 'Professional Services'}</div>
-      </td>
-      <td class="item-num-right" style="text-align:center;color:#888888;font-size:8pt;">${esc(inv.hsn_code) || '998314'}</td>
+      <td class="item-num">${idx + 1}</td>
+      <td class="item-desc"><div class="item-title">${esc(item.description)}</div></td>
+      <td class="item-num-right" style="text-align:center;color:#999999;font-size:8pt;">${esc(item.hsn_code) || '-'}</td>
       <td class="item-num-right">${qty.toFixed(2)}</td>
       <td class="item-num-right">${fmt(rate)}</td>
-      ${isCGST ? `
-      <td class="tax-cell">9%<br/><span style="font-weight:600;color:#2D2D2D;">${fmt(cgst)}</span></td>
-      <td class="tax-cell">9%<br/><span style="font-weight:600;color:#2D2D2D;">${fmt(sgst)}</span></td>
-      ` : `
-      <td class="tax-cell">18%<br/><span style="font-weight:600;color:#2D2D2D;">${fmt(igst)}</span></td>
-      `}
-      ${discount > 0 ? `<td class="tax-cell" style="color:#E05C2A;">0.00</td>` : ''}
-      <td class="item-amount">${fmt(taxableAmount)}</td>
-    </tr>
+      ${hasItemDiscounts ? `<td class="discount-cell">${disc > 0 ? discLabel : '-'}</td>` : ''}
+      <td class="item-amount">${fmt(amt)}</td>
+    </tr>`
+    }).join('')}
   </tbody>
 </table>
 
@@ -858,41 +917,42 @@ ${isPaid ? '<div class="paid-stamp">PAID</div>' : ''}
   <div class="totals-block">
     <div class="total-row">
       <span class="t-label">Sub Total</span>
-      <span class="t-value">${fmt(taxableAmount)}</span>
+      <span class="t-value">${fmt(subtotal)}</span>
     </div>
-    ${isCGST ? `
-    <div class="total-row">
-      <span class="t-label">CGST (9%)</span>
-      <span class="t-value">${fmt(cgst)}</span>
-    </div>
-    <div class="total-row">
-      <span class="t-label">SGST (9%)</span>
-      <span class="t-value">${fmt(sgst)}</span>
-    </div>
-    ` : `
-    <div class="total-row">
-      <span class="t-label">IGST (18%)</span>
-      <span class="t-value">${fmt(igst)}</span>
-    </div>
-    `}
     ${discount > 0 ? `
     <div class="total-row discount">
       <span class="t-label">Discount</span>
       <span class="t-value">(-) ${fmt(discount)}</span>
     </div>` : ''}
+    ${showTax ? (isCGST ? `
+    <div class="total-row">
+      <span class="t-label">CGST (${(gstRate / 2).toFixed(1)}%)</span>
+      <span class="t-value">${fmt(cgst)}</span>
+    </div>
+    <div class="total-row">
+      <span class="t-label">SGST (${(gstRate / 2).toFixed(1)}%)</span>
+      <span class="t-value">${fmt(sgst)}</span>
+    </div>
+    ` : `
+    <div class="total-row">
+      <span class="t-label">IGST (${gstRate}%)</span>
+      <span class="t-value">${fmt(igst)}</span>
+    </div>
+    `) : ''}
     ${Math.abs(rounding) > 0.001 ? `
     <div class="total-row">
-      <span class="t-label">Rounding</span>
+      <span class="t-label">${inv.round_off ? 'Round Off' : 'Rounding'}</span>
       <span class="t-value">${rounding > 0 ? '+' : ''}${fmt(rounding)}</span>
     </div>` : ''}
     <div class="total-row grand-total">
-      <span class="t-label">Total</span>
+      <span class="t-label">${isQuotation ? 'Quotation Total' : 'Total'}</span>
       <span class="t-value">${fmt(total)}</span>
     </div>
+    ${!isQuotation ? `
     <div class="total-row balance-due-row">
       <span class="t-label">Balance Due</span>
       <span class="t-value">${fmt(balanceDue)}</span>
-    </div>
+    </div>` : ''}
   </div>
 </div>
 
@@ -905,6 +965,7 @@ ${isPaid ? '<div class="paid-stamp">PAID</div>' : ''}
     ${amountInWords(total)}
   </div>
 
+  ${!isQuotation ? `
   <!-- Payment + QR -->
   <div class="payment-row">
     <div class="payment-details">
@@ -915,24 +976,21 @@ ${isPaid ? '<div class="paid-stamp">PAID</div>' : ''}
       <div class="payment-line">A/C No: <strong>${esc(bank.account_no)}</strong> &nbsp;|&nbsp; IFSC: <strong>${esc(bank.ifsc_code)}</strong></div>
       ` : ''}
       ${inv.company_upi ? `<div class="payment-line">UPI: <strong>${esc(inv.company_upi)}</strong></div>` : ''}
-      <div class="payment-line" style="margin-top:4px;color:#AAAAAA;font-size:7.5pt;">
-        Payment due within 14 days of invoice date.
+      <div class="payment-line" style="margin-top:5px;color:#AAAAAA;font-size:7.75pt;">
+        Payment due by ${fmtDate(inv.due_date)} (${esc(paymentTermsLabel)}).
       </div>
     </div>
+    ${upiQR ? `
     <div class="qr-group">
-      ${inv.company_upi ? `
       <div class="qr-item">
-        <img src="${upiQR}" width="88" height="88" />
+        <img src="${upiQR}" width="108" height="108" />
         <div class="qr-caption">Scan to Pay</div>
-      </div>` : ''}
-      <div class="qr-item">
-        <img src="${agentQR}" width="56" height="56" />
-        <div class="qr-caption">Invoice Data</div>
       </div>
-    </div>
+    </div>` : ''}
   </div>
 
   <hr class="divider" />
+  ` : ''}
 
   <!-- Notes + Terms + Signature -->
   <div class="footer-row">
@@ -962,7 +1020,7 @@ ${isPaid ? '<div class="paid-stamp">PAID</div>' : ''}
 <!-- ═══ AUDIT FOOTER ═══ -->
 <div class="audit-footer">
   <span>Generated: ${new Date().toISOString()} · CBOP v2</span>
-  <span>${esc(inv.invoice_no)} · ${esc(inv.company_gstin) || 'GSTIN Applied For'}</span>
+  <span>${esc(inv.invoice_no)}${showCompanyGstin ? ` · ${esc(inv.company_gstin)}` : ''}</span>
 </div>
 
 </body>
@@ -973,8 +1031,10 @@ ${isPaid ? '<div class="paid-stamp">PAID</div>' : ''}
   // that this container's seccomp profile blocks even under the non-root `nextjs`
   // user (see Dockerfile). Removing it makes Puppeteer fail to launch rather than
   // run sandboxed. The actual backstop is that every DB-sourced string reaching this
-  // template goes through esc() (see the client_name/notes/po_number/service_description
-  // interpolations above) — verified during the 2026-07-27 audit fix pass.
+  // template goes through esc() (see the client_name/notes/po_number/item description/
+  // terms_conditions/place_of_supply/payment_terms_label interpolations above) —
+  // verified during the 2026-07-27 audit fix pass and re-verified when this template
+  // was rebuilt for line items/quotations/GST modes.
   const browser = await puppeteer.launch({
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],

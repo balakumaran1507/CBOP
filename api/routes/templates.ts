@@ -10,6 +10,7 @@ import * as fsPromises from 'fs/promises'
 import { buildGoogleFontsImportCss } from '../lib/fonts'
 import { type TiptapNode, esc, collectFontFamilies, renderTiptapNode } from '../lib/tiptap-render'
 import { defaultOpsAlertEmail, getOpsAlertEmail } from '../lib/ops-alerts'
+import { writeMutationAuditLog } from '../lib/audit-log'
 
 const app = new Hono()
 
@@ -438,8 +439,13 @@ app.post('/api/templates', requireAuth, requireRole('ceo', 'coo', 'cto'), async 
       JSON.stringify(variables),
     ]
   )
+  const template = result.rows[0]
 
-  return c.json({ template: result.rows[0] }, 201)
+  await writeMutationAuditLog(c, {
+    table: 'templates', op: 'create', id: template.id, after: template, companyId: company_id,
+  })
+
+  return c.json({ template }, 201)
 })
 
 // ── PATCH /api/templates/:id ──────────────────────────────────────────────────
@@ -450,7 +456,7 @@ app.patch('/api/templates/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), a
   const body       = await c.req.json()
 
   const existing = await query(
-    `SELECT id, content, content_json, version FROM templates WHERE id = $1 AND company_id = ANY($2)`,
+    `SELECT id, company_id, content, content_json, version FROM templates WHERE id = $1 AND company_id = ANY($2)`,
     [id, companyIds]
   )
   if (existing.rows.length === 0) return c.json({ error: 'Template not found' }, 404)
@@ -494,8 +500,13 @@ app.patch('/api/templates/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), a
     `UPDATE templates SET ${fields.join(', ')}, updated_at = NOW() WHERE id = $${idx} RETURNING *`,
     values
   )
+  const template = result.rows[0]
 
-  return c.json({ template: result.rows[0] })
+  await writeMutationAuditLog(c, {
+    table: 'templates', op: 'update', id, before: current, after: template, companyId: current.company_id,
+  })
+
+  return c.json({ template })
 })
 
 // ── DELETE /api/templates/:id ─────────────────────────────────────────────────
@@ -505,12 +516,18 @@ app.delete('/api/templates/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), 
   const id         = c.req.param('id')
 
   const existing = await query(
-    `SELECT id FROM templates WHERE id = $1 AND company_id = ANY($2)`,
+    `SELECT * FROM templates WHERE id = $1 AND company_id = ANY($2)`,
     [id, companyIds]
   )
   if (existing.rows.length === 0) return c.json({ error: 'Template not found' }, 404)
+  const before = existing.rows[0]
 
   await query(`DELETE FROM templates WHERE id = $1`, [id])
+
+  await writeMutationAuditLog(c, {
+    table: 'templates', op: 'delete', id, before, companyId: before.company_id,
+  })
+
   return c.json({ ok: true })
 })
 

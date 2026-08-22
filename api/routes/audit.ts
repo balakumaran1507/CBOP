@@ -1,11 +1,32 @@
 import { Hono } from 'hono'
+import type { Context } from 'hono'
 import { requireAuth } from '../middleware/require-auth'
 import { requireRole } from '../middleware/require-role'
 import { query } from '../lib/db'
 import { runAuditChecks } from '../lib/audit-checks'
+import { getPagination } from '../lib/route-utils'
+import { AUDIT_ACTIONS, writeAuthzDenial } from '../lib/audit-log'
 import '../lib/hono-vars'
 
 const app = new Hono()
+
+/**
+ * Creator-only guard, mirrored from routes/settings.ts (not exported there) —
+ * see that file's header comment for why this checks role inline instead of
+ * going through requireRole.
+ */
+function isCreator(c: Context): boolean {
+  return c.get('role') === 'creator'
+}
+
+function forbidCreatorOnly(c: Context) {
+  writeAuthzDenial(c, {
+    action: AUDIT_ACTIONS.authzRoleDenied,
+    reason: 'creator_only_route',
+    detail: { actor_role: c.get('role') ?? null, required_roles: ['creator'] },
+  })
+  return c.json({ error: 'Forbidden: creator only' }, 403)
+}
 
 // ── POST /api/audit/scan ─────────────────────────────────────────────────────
 // Re-runs the deterministic SQL checks and upserts findings. Never auto-closes
@@ -99,6 +120,89 @@ app.patch('/api/audit/findings/:id', requireAuth, requireRole('ceo'), async (c) 
   )
 
   return c.json({ finding: result.rows[0] })
+})
+
+// ── GET /api/audit/logs ───────────────────────────────────────────────────────
+// Platform-wide activity log (audit_logs, not audit_findings). Creator-only:
+// this is a super-admin view across every company, not gated by companyIds.
+
+app.get('/api/audit/logs', requireAuth, async (c) => {
+  if (!isCreator(c)) return forbidCreatorOnly(c)
+
+  const { page, limit, offset } = getPagination(c)
+  const action       = c.req.query('action')
+  const resourceType = c.req.query('resource_type')
+  const actorId      = c.req.query('actor_id')
+  const companyId    = c.req.query('company_id')
+  const from         = c.req.query('from')
+  const to           = c.req.query('to')
+  const q            = c.req.query('q')
+
+  const conditions: string[] = []
+  const params: unknown[]    = []
+
+  if (action) {
+    params.push(`${action}%`)
+    conditions.push(`al.action ILIKE $${params.length}`)
+  }
+  if (resourceType) {
+    params.push(resourceType)
+    conditions.push(`al.resource_type = $${params.length}`)
+  }
+  if (actorId) {
+    params.push(actorId)
+    conditions.push(`al.actor_id = $${params.length}`)
+  }
+  if (companyId) {
+    params.push(companyId)
+    conditions.push(`al.company_id = $${params.length}`)
+  }
+  if (from) {
+    params.push(from)
+    conditions.push(`al.created_at >= $${params.length}`)
+  }
+  if (to) {
+    params.push(to)
+    conditions.push(`al.created_at <= $${params.length}`)
+  }
+  if (q) {
+    params.push(`%${q}%`)
+    conditions.push(`al.resource_id ILIKE $${params.length}`)
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+  params.push(limit)
+  const limitParam = `$${params.length}`
+  params.push(offset)
+  const offsetParam = `$${params.length}`
+
+  const result = await query(
+    `SELECT al.id, al.actor_id, al.actor_role, al.company_id, al.action,
+            al.resource_type, al.resource_id, al.before_json, al.after_json,
+            al.ip_address, al.user_agent, al.created_at,
+            u.name AS actor_name,
+            co.name AS company_name
+     FROM audit_logs al
+     LEFT JOIN users u      ON u.id  = al.actor_id
+     LEFT JOIN companies co ON co.id = al.company_id
+     ${whereClause}
+     ORDER BY al.created_at DESC
+     LIMIT ${limitParam} OFFSET ${offsetParam}`,
+    params
+  )
+
+  return c.json({ logs: result.rows, page, limit })
+})
+
+// ── GET /api/audit/logs/actions ───────────────────────────────────────────────
+// Distinct action names, for populating a filter dropdown. Creator-only.
+
+app.get('/api/audit/logs/actions', requireAuth, async (c) => {
+  if (!isCreator(c)) return forbidCreatorOnly(c)
+
+  const result = await query(`SELECT DISTINCT action FROM audit_logs ORDER BY action`)
+  return c.json({ actions: result.rows.map((r) => r.action as string) })
 })
 
 export default app

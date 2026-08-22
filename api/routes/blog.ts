@@ -5,6 +5,7 @@ import { query } from '../lib/db'
 import { generateArticleJsonLd } from '../lib/blog-schema'
 import * as fs from 'fs'
 import * as path from 'path'
+import { writeMutationAuditLog } from '../lib/audit-log'
 import '../lib/hono-vars'
 
 const app = new Hono()
@@ -70,7 +71,13 @@ app.post('/api/blog/posts', requireAuth, requireRole('ceo'), async (c) => {
     [company_id, title, slug, excerpt ?? null, content ?? '', userId, category ?? null, tags ?? [],
      meta_title ?? null, meta_description ?? null, og_image_url ?? null, canonical_url ?? null]
   )
-  return c.json({ post: result.rows[0] }, 201)
+  const post = result.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'blog_posts', op: 'create', id: post.id, after: post, companyId: company_id,
+  })
+
+  return c.json({ post }, 201)
 })
 
 // ── PATCH /api/blog/posts/:id ────────────────────────────────────────────────
@@ -83,7 +90,7 @@ app.patch('/api/blog/posts/:id', requireAuth, requireRole('ceo'), async (c) => {
   const body = await c.req.json()
 
   const existing = await query(
-    `SELECT id, title, content FROM blog_posts WHERE id = $1 AND company_id = ANY($2)`,
+    `SELECT id, company_id, title, content FROM blog_posts WHERE id = $1 AND company_id = ANY($2)`,
     [id, companyIds]
   )
   if (existing.rows.length === 0) return c.json({ error: 'Not found' }, 404)
@@ -117,7 +124,13 @@ app.patch('/api/blog/posts/:id', requireAuth, requireRole('ceo'), async (c) => {
   values.push(id)
 
   const result = await query(`UPDATE blog_posts SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`, values)
-  return c.json({ post: result.rows[0] })
+  const post = result.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'blog_posts', op: 'update', id, before: current, after: post, companyId: current.company_id,
+  })
+
+  return c.json({ post })
 })
 
 // ── POST /api/blog/posts/:id/publish ─────────────────────────────────────────
@@ -130,8 +143,9 @@ app.post('/api/blog/posts/:id/publish', requireAuth, requireRole('ceo'), async (
   const body = await c.req.json().catch(() => ({}))
   const { scheduled_at } = body as { scheduled_at?: string }
 
-  const existing = await query(`SELECT id FROM blog_posts WHERE id = $1 AND company_id = ANY($2)`, [id, companyIds])
+  const existing = await query(`SELECT id, company_id, status FROM blog_posts WHERE id = $1 AND company_id = ANY($2)`, [id, companyIds])
   if (existing.rows.length === 0) return c.json({ error: 'Not found' }, 404)
+  const before = existing.rows[0]
 
   const result = scheduled_at
     ? await query(
@@ -142,8 +156,14 @@ app.post('/api/blog/posts/:id/publish', requireAuth, requireRole('ceo'), async (
         `UPDATE blog_posts SET status = 'published', published_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`,
         [id]
       )
+  const post = result.rows[0]
 
-  return c.json({ post: result.rows[0] })
+  await writeMutationAuditLog(c, {
+    table: 'blog_posts', op: 'update', id,
+    before: { status: before.status }, after: { status: post.status }, companyId: before.company_id,
+  })
+
+  return c.json({ post })
 })
 
 // ── DELETE /api/blog/posts/:id ───────────────────────────────────────────────
@@ -152,10 +172,16 @@ app.delete('/api/blog/posts/:id', requireAuth, requireRole('ceo'), async (c) => 
   const companyIds = c.get('companyIds') as string[]
   const id = c.req.param('id')
 
-  const existing = await query(`SELECT id FROM blog_posts WHERE id = $1 AND company_id = ANY($2)`, [id, companyIds])
+  const existing = await query(`SELECT * FROM blog_posts WHERE id = $1 AND company_id = ANY($2)`, [id, companyIds])
   if (existing.rows.length === 0) return c.json({ error: 'Not found' }, 404)
+  const before = existing.rows[0]
 
   await query(`DELETE FROM blog_posts WHERE id = $1`, [id])
+
+  await writeMutationAuditLog(c, {
+    table: 'blog_posts', op: 'delete', id, before, companyId: before.company_id,
+  })
+
   return c.json({ ok: true })
 })
 
@@ -206,7 +232,13 @@ app.post('/api/blog/media/upload', requireAuth, requireRole('ceo'), async (c) =>
     `INSERT INTO blog_post_media (company_id, url, filename, uploaded_by) VALUES ($1,$2,$3,$4) RETURNING *`,
     [companyId, url, file.name, userId]
   )
-  return c.json({ media: result.rows[0] }, 201)
+  const media = result.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'blog_post_media', op: 'create', id: media.id, after: media, companyId,
+  })
+
+  return c.json({ media }, 201)
 })
 
 app.get('/api/blog/media', requireAuth, requireRole('ceo'), async (c) => {

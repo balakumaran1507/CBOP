@@ -4,6 +4,7 @@ import { requireRole } from '../middleware/require-role'
 import { query }       from '../lib/db'
 import { sendEmail, isSuppressed, suppress } from '../lib/mailer'
 import { createHmac }  from 'node:crypto'
+import { writeMutationAuditLog } from '../lib/audit-log'
 import '../lib/hono-vars'
 
 const app = new Hono()
@@ -55,13 +56,30 @@ app.post('/api/lists', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) 
     `INSERT INTO email_lists (company_id, name, description, double_optin, created_by)
      VALUES ($1,$2,$3,$4,$5) RETURNING *`,
     [company_id, name, description ?? null, double_optin ?? false, userId])
+
+  await writeMutationAuditLog(c, {
+    table: 'email_lists', op: 'create', id: list.id, after: list, companyId: company_id,
+  })
+
   return c.json(list, 201)
 })
 
 app.delete('/api/lists/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const companyIds = c.get('companyIds') as string[]
+  const id = c.req.param('id')
+
+  const { rows: [existing] } = await query(
+    `SELECT * FROM email_lists WHERE id = $1 AND company_id = ANY($2)`, [id, companyIds])
+
   await query(`DELETE FROM email_lists WHERE id = $1 AND company_id = ANY($2)`,
-    [c.req.param('id'), companyIds])
+    [id, companyIds])
+
+  if (existing) {
+    await writeMutationAuditLog(c, {
+      table: 'email_lists', op: 'delete', id, before: existing, companyId: existing.company_id,
+    })
+  }
+
   return c.json({ ok: true })
 })
 
@@ -106,6 +124,11 @@ app.post('/api/subscribers', requireAuth, requireRole('ceo', 'coo', 'cto'), asyn
     await query(`INSERT INTO email_list_members (list_id, subscriber_id) VALUES ($1,$2)
                  ON CONFLICT DO NOTHING`, [list_id, sub.id])
   }
+
+  await writeMutationAuditLog(c, {
+    table: 'email_subscribers', op: 'create', id: sub.id, after: sub, companyId: company_id,
+  })
+
   return c.json(sub, 201)
 })
 
@@ -137,26 +160,55 @@ app.post('/api/subscribers/import', requireAuth, requireRole('ceo', 'coo', 'cto'
     }
     sub ? added++ : skipped++
   }
+
+  await writeMutationAuditLog(c, {
+    table: 'email_subscribers', op: 'create', id: null,
+    after: { added, skipped, total: lines.length, list_id: list_id ?? null }, companyId: company_id,
+  })
+
   return c.json({ added, skipped, total: lines.length })
 })
 
 app.patch('/api/subscribers/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const companyIds = c.get('companyIds') as string[]
+  const id = c.req.param('id')
   const { name, status } = await c.req.json() as { name?: string; status?: string }
+
+  const { rows: [before] } = await query(
+    `SELECT * FROM email_subscribers WHERE id = $1 AND company_id = ANY($2)`, [id, companyIds])
+  if (!before) return c.json({ error: 'Not found' }, 404)
+
   const { rows: [sub] } = await query(
     `UPDATE email_subscribers SET
        name   = COALESCE($2, name),
        status = COALESCE($3, status)
      WHERE id = $1 AND company_id = ANY($4) RETURNING *`,
-    [c.req.param('id'), name ?? null, status ?? null, companyIds])
+    [id, name ?? null, status ?? null, companyIds])
   if (!sub) return c.json({ error: 'Not found' }, 404)
+
+  await writeMutationAuditLog(c, {
+    table: 'email_subscribers', op: 'update', id, before, after: sub, companyId: sub.company_id,
+  })
+
   return c.json(sub)
 })
 
 app.delete('/api/subscribers/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const companyIds = c.get('companyIds') as string[]
+  const id = c.req.param('id')
+
+  const { rows: [existing] } = await query(
+    `SELECT * FROM email_subscribers WHERE id = $1 AND company_id = ANY($2)`, [id, companyIds])
+
   await query(`DELETE FROM email_subscribers WHERE id = $1 AND company_id = ANY($2)`,
-    [c.req.param('id'), companyIds])
+    [id, companyIds])
+
+  if (existing) {
+    await writeMutationAuditLog(c, {
+      table: 'email_subscribers', op: 'delete', id, before: existing, companyId: existing.company_id,
+    })
+  }
+
   return c.json({ ok: true })
 })
 
@@ -175,6 +227,11 @@ app.delete('/api/suppression/:email', requireAuth, requireRole('ceo'), async (c)
   const email = decodeURIComponent(c.req.param('email') ?? '').toLowerCase()
   await query(`DELETE FROM email_suppression WHERE email = $1`, [email])
   await query(`DELETE FROM email_unsubscribes WHERE email = $1`, [email])
+
+  await writeMutationAuditLog(c, {
+    table: 'email_suppression', op: 'delete', id: email, before: { email }, companyId: null,
+  })
+
   return c.json({ ok: true })
 })
 

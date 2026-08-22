@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { requireAuth } from '../middleware/require-auth'
 import { query } from '../lib/db'
 import { notFound, validationError } from '../lib/route-utils'
+import { writeMutationAuditLog } from '../lib/audit-log'
 import '../lib/hono-vars'
 
 const app = new Hono()
@@ -76,8 +77,13 @@ app.post('/api/tasks', requireAuth, async (c) => {
       linked_deal_id || null,
     ]
   )
+  const task = result.rows[0]
 
-  return c.json({ task: result.rows[0] }, 201)
+  await writeMutationAuditLog(c, {
+    table: 'ops_tasks', op: 'create', id: task.id, after: task, companyId: company_id,
+  })
+
+  return c.json({ task }, 201)
 })
 
 // ── PATCH /api/tasks/:id ──────────────────────────────────────────────────────
@@ -92,6 +98,18 @@ app.patch('/api/tasks/:id', requireAuth, async (c) => {
   const validPriorities = ['low', 'medium', 'high', 'critical']
   if (status   && !validStatuses.includes(status))    return validationError(c, 'Invalid status')
   if (priority && !validPriorities.includes(priority)) return validationError(c, 'Invalid priority')
+
+  const existing = await query(
+    `SELECT t.id, t.company_id, t.title, t.status, t.priority, t.start_date, t.due_date, t.depends_on_task_id
+     FROM ops_tasks t
+     WHERE t.id = $1
+       AND (t.company_id = ANY($2) OR EXISTS (
+         SELECT 1 FROM ops_projects p WHERE p.id = t.project_id AND p.work_type = 'internal'
+       ))`,
+    [taskId, companyIds]
+  )
+  if (existing.rows.length === 0) return notFound(c, 'Task')
+  const before = existing.rows[0]
 
   const result = await query(
     `UPDATE ops_tasks t
@@ -116,7 +134,13 @@ app.patch('/api/tasks/:id', requireAuth, async (c) => {
   )
 
   if (result.rows.length === 0) return notFound(c, 'Task')
-  return c.json({ success: true, task: result.rows[0] })
+  const task = result.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'ops_tasks', op: 'update', id: taskId, before, after: task, companyId: before.company_id,
+  })
+
+  return c.json({ success: true, task })
 })
 
 export default app

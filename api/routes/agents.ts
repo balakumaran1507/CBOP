@@ -3,6 +3,7 @@ import { requireAuth } from '../middleware/require-auth'
 import { requireRole } from '../middleware/require-role'
 import { query } from '../lib/db'
 import { triggerAgent, sendViaOpenClaw } from '../lib/openclaw'
+import { writeMutationAuditLog } from '../lib/audit-log'
 import '../lib/hono-vars'
 
 const app = new Hono()
@@ -24,6 +25,10 @@ app.post('/api/agents/trigger/:name', requireAuth, requireRole('ceo', 'coo', 'ct
     [name, JSON.stringify(body)]
   )
   const jobId = String(jobResult.rows[0].id)
+
+  await writeMutationAuditLog(c, {
+    table: 'system_jobs', op: 'create', id: jobId, after: { name, type: 'agent', status: 'running', payload: body }, companyId: null,
+  })
 
   // Fire agent async - don't block the response
   triggerAgent({ agent: name, context: body as Record<string, unknown> })
@@ -169,13 +174,25 @@ app.post('/api/agents/cbop-control/tools/createTask', requireAuth, async (c) => 
       body.priority || 'normal',
     ]
   )
-  return c.json(result.rows[0])
+  const task = result.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'ops_tasks', op: 'create', id: task.id, after: task, companyId: projectCheck.rows[0].company_id,
+  })
+
+  return c.json(task)
 })
 
 app.post('/api/agents/cbop-control/tools/markTaskDone', requireAuth, async (c) => {
   const companyIds = c.get('companyIds') as string[]
   const body = await c.req.json<{ task_id: string }>()
   if (!body.task_id) return c.json({ error: 'task_id required' }, 400)
+
+  const existing = await query(
+    `SELECT id, company_id, status FROM ops_tasks WHERE id = $1 AND company_id = ANY($2)`,
+    [body.task_id, companyIds]
+  )
+  if (!existing.rows.length) return c.json({ error: 'Task not found' }, 404)
 
   const result = await query(
     `UPDATE ops_tasks SET status = 'done'
@@ -184,6 +201,12 @@ app.post('/api/agents/cbop-control/tools/markTaskDone', requireAuth, async (c) =
     [body.task_id, companyIds]
   )
   if (!result.rows.length) return c.json({ error: 'Task not found' }, 404)
+
+  await writeMutationAuditLog(c, {
+    table: 'ops_tasks', op: 'update', id: body.task_id,
+    before: { status: existing.rows[0].status }, after: { status: 'done' }, companyId: existing.rows[0].company_id,
+  })
+
   return c.json({ ok: true, task: result.rows[0] })
 })
 
@@ -209,7 +232,13 @@ app.post('/api/agents/cbop-control/tools/createLead', requireAuth, requireRole('
       body.company_id,
     ]
   )
-  return c.json(result.rows[0])
+  const lead = result.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'sales_leads', op: 'create', id: lead.id, after: lead, companyId: body.company_id,
+  })
+
+  return c.json(lead)
 })
 
 app.get('/api/agents/cbop-control/tools/getMorningBriefing', requireAuth, async (c) => {
@@ -289,6 +318,11 @@ app.post('/api/agents/cbop-control/tools/sendInvoiceReminder', requireAuth, requ
      WHERE id = $2`,
     [JSON.stringify({ reminder_count: newCount, last_reminded_at: new Date().toISOString() }), body.invoice_id]
   )
+
+  await writeMutationAuditLog(c, {
+    table: 'sales_invoices', op: 'update', id: body.invoice_id,
+    before: { reminder_count: inv.reminder_count ?? 0 }, after: { reminder_count: newCount }, companyId: null,
+  })
 
   return c.json({ ok: true, reminder_count: newCount })
 })

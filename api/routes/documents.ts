@@ -1,7 +1,7 @@
 import { Hono }         from 'hono'
 import { requireAuth }  from '../middleware/require-auth'
 import { query }        from '../lib/db'
-import { AUDIT_ACTIONS, writeAuditLogForRequest } from '../lib/audit-log'
+import { AUDIT_ACTIONS, writeAuditLogForRequest, writeMutationAuditLog } from '../lib/audit-log'
 import { getCampaignTransporter } from '../lib/mailer'
 import { readFile, writeFile, mkdir, unlink } from 'fs/promises'
 import { existsSync }   from 'fs'
@@ -128,7 +128,13 @@ app.post('/api/documents/templates', requireAuth, async (c) => {
      canvas_width ?? 794, canvas_height ?? 1123,
      JSON.stringify(elements ?? []), tags, userId]
   )
-  return c.json(rows[0], 201)
+  const template = rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'document_templates', op: 'create', id: template.id, after: template, companyId: company_id,
+  })
+
+  return c.json(template, 201)
 })
 
 // ── Update template ───────────────────────────────────────────────────────────
@@ -138,7 +144,7 @@ app.patch('/api/documents/templates/:id', requireAuth, async (c) => {
   const body = await c.req.json()
 
   const { rows: [existing] } = await query(
-    `SELECT id FROM document_templates WHERE id = $1 AND company_id = ANY($2)`,
+    `SELECT * FROM document_templates WHERE id = $1 AND company_id = ANY($2)`,
     [id, companyIds]
   )
   if (!existing) return c.json({ error: 'Not found' }, 404)
@@ -162,7 +168,13 @@ app.patch('/api/documents/templates/:id', requireAuth, async (c) => {
      elements != null ? JSON.stringify(elements) : null,
      tags, id]
   )
-  return c.json(rows[0])
+  const template = rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'document_templates', op: 'update', id, before: existing, after: template, companyId: existing.company_id,
+  })
+
+  return c.json(template)
 })
 
 // ── Delete template ───────────────────────────────────────────────────────────
@@ -171,12 +183,16 @@ app.delete('/api/documents/templates/:id', requireAuth, async (c) => {
   const id = c.req.param('id') as string
 
   const { rows: [existing] } = await query(
-    `SELECT id, background_path FROM document_templates WHERE id = $1 AND company_id = ANY($2)`,
+    `SELECT * FROM document_templates WHERE id = $1 AND company_id = ANY($2)`,
     [id, companyIds]
   )
   if (!existing) return c.json({ error: 'Not found' }, 404)
 
   await query('DELETE FROM document_templates WHERE id = $1', [id])
+
+  await writeMutationAuditLog(c, {
+    table: 'document_templates', op: 'delete', id, before: existing, companyId: existing.company_id,
+  })
 
   if (existing.background_path) {
     const bgPath = path.join(UPLOAD_DIR, existing.background_path as string)
@@ -219,6 +235,10 @@ app.post('/api/documents/templates/:id/generate', requireAuth, async (c) => {
      batch_name || `${template.name as string} - Batch`,
      recipients.length, !!send_email, userId, extra_attachment_ids ?? []]
   )
+
+  await writeMutationAuditLog(c, {
+    table: 'document_batches', op: 'create', id: batch.id, after: batch, companyId: template.company_id,
+  })
 
   runBatch(batch.id as string, template, recipients, !!send_email, email_subject, email_message, email_design_id).catch((err: Error) => {
     console.error('[documents] batch failed:', err)
@@ -460,6 +480,11 @@ app.patch('/api/documents/generated/:id/acknowledge', requireAuth, async (c) => 
   if (!companyIds.includes(doc.company_id)) return c.json({ error: 'Forbidden' }, 403)
 
   await query(`UPDATE document_generated SET status = 'acknowledged', acknowledged_at = NOW() WHERE id = $1`, [id])
+
+  await writeMutationAuditLog(c, {
+    table: 'document_generated', op: 'update', id, after: { status: 'acknowledged' }, companyId: doc.company_id,
+  })
+
   return c.json({ ok: true })
 })
 
@@ -859,6 +884,11 @@ app.post('/api/documents/batches/:id/resume', requireAuth, async (c) => {
   if (!batch) return c.json({ error: 'Batch not found' }, 404)
 
   await query(`UPDATE document_batches SET paused = false, error_message = NULL WHERE id = $1`, [id])
+
+  await writeMutationAuditLog(c, {
+    table: 'document_batches', op: 'update', id, before: { paused: batch.paused }, after: { paused: false }, companyId: batch.company_id,
+  })
+
   runPendingItems(id).catch((err: Error) => console.error('[documents] resume failed:', err))
   return c.json({ ok: true })
 })
@@ -866,8 +896,15 @@ app.post('/api/documents/batches/:id/resume', requireAuth, async (c) => {
 app.post('/api/documents/batches/:id/pause', requireAuth, async (c) => {
   const companyIds = c.get('companyIds') as string[]
   const id = c.req.param('id') as string
-  const { rowCount } = await query(`UPDATE document_batches SET paused = true WHERE id = $1 AND company_id = ANY($2)`, [id, companyIds])
-  if (rowCount === 0) return c.json({ error: 'Batch not found' }, 404)
+  const { rows: [existing] } = await query(`SELECT company_id, paused FROM document_batches WHERE id = $1 AND company_id = ANY($2)`, [id, companyIds])
+  if (!existing) return c.json({ error: 'Batch not found' }, 404)
+
+  await query(`UPDATE document_batches SET paused = true WHERE id = $1`, [id])
+
+  await writeMutationAuditLog(c, {
+    table: 'document_batches', op: 'update', id, before: { paused: existing.paused }, after: { paused: true }, companyId: existing.company_id,
+  })
+
   return c.json({ ok: true })
 })
 
@@ -918,6 +955,10 @@ app.post('/api/documents/batches/:id/duplicate', requireAuth, async (c) => {
   const placeholders = items.map((_, i) => `($1,$${i * 2 + 2},$${i * 2 + 3})`).join(',')
   const values = items.flatMap((r, i) => [i, JSON.stringify(r.recipient_data)])
   await query(`INSERT INTO document_batch_items (batch_id, seq, recipient_data) VALUES ${placeholders}`, [batch.id, ...values])
+
+  await writeMutationAuditLog(c, {
+    table: 'document_batches', op: 'create', id: batch.id, after: batch, companyId: batch.company_id,
+  })
 
   runPendingItems(batch.id as string).catch((err: Error) => console.error('[documents] duplicate-batch run failed:', err))
   return c.json({ batch_id: batch.id }, 201)

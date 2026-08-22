@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { requireAuth } from '../middleware/require-auth'
 import { requireRole } from '../middleware/require-role'
 import { query } from '../lib/db'
-import { AUDIT_ACTIONS, writeAuditLogForRequest } from '../lib/audit-log'
+import { AUDIT_ACTIONS, writeAuditLogForRequest, writeMutationAuditLog } from '../lib/audit-log'
 import { sendEmail, isAtDailyCap, dailyCapFor } from '../lib/mailer'
 import { sendViaOpenClaw } from '../lib/openclaw'
 import { extractResumeData, suggestRoleForApplicant, extractStatedRole } from '../lib/resume-scorer'
@@ -393,6 +393,10 @@ app.post('/api/hiring/applicants', requireAuth, requireRole('ceo', 'coo', 'cto')
 
   const applicant = result.rows[0]
 
+  await writeMutationAuditLog(c, {
+    table: 'hiring_applicants', op: 'create', id: applicant.id, after: applicant, companyId: company_id ?? null,
+  })
+
   // Enqueue scoring job
   if (resume_text && role_id) {
     await query(
@@ -679,6 +683,13 @@ app.post('/api/hiring/applicants/:id/score', requireAuth, requireRole('ceo', 'co
     [llmScore.score, JSON.stringify(llmScore), llmScore.summary, newStage, applicantId],
   )
 
+  await writeMutationAuditLog(c, {
+    table: 'hiring_applicants', op: 'update', id: applicantId,
+    before: { ai_score: applicant.ai_score, stage: applicant.stage },
+    after:  { ai_score: llmScore.score, stage: newStage },
+    companyId: applicant.company_id,
+  })
+
   // Extract and save contact details (best-effort)
   if (resumeText) {
     try {
@@ -731,15 +742,22 @@ app.patch('/api/hiring/applicants/:id/role', requireAuth, requireRole('ceo', 'co
   const { role_id } = await c.req.json()
 
   const check = await query(
-    `SELECT id FROM hiring_applicants WHERE id = $1 AND company_id = ANY($2)`,
+    `SELECT id, company_id, role_id FROM hiring_applicants WHERE id = $1 AND company_id = ANY($2)`,
     [applicantId, companyIds]
   )
   if (!check.rows.length) return c.json({ error: 'Applicant not found' }, 404)
+  const before = check.rows[0]
 
   await query(
     `UPDATE hiring_applicants SET role_id = $1, updated_at = NOW() WHERE id = $2`,
     [role_id || null, applicantId]
   )
+
+  await writeMutationAuditLog(c, {
+    table: 'hiring_applicants', op: 'update', id: applicantId,
+    before: { role_id: before.role_id }, after: { role_id: role_id || null }, companyId: before.company_id,
+  })
+
   return c.json({ ok: true })
 })
 
@@ -792,6 +810,13 @@ app.patch('/api/hiring/applicants/:id/stage', requireAuth, requireRole('ceo', 'c
     params,
   )
 
+  await writeMutationAuditLog(c, {
+    table: 'hiring_applicants', op: 'update', id: applicantId,
+    before: { stage: applicant.stage },
+    after:  { stage, rejection_reason: rejection_reason ?? undefined, review_notes: review_notes ?? undefined },
+    companyId: applicant.company_id,
+  })
+
   if (stage === 'shortlisted') {
     const role = { title: applicant.role_title || 'Intern' }
     const co   = { name: applicant.company_name || '' }
@@ -821,7 +846,7 @@ app.delete('/api/hiring/applicants/:id', requireAuth, requireRole('ceo', 'coo', 
   const companyIds  = c.get('companyIds') as string[]
   const applicantId = c.req.param('id')
   const { rows: [existing] } = await query(
-    `SELECT id FROM hiring_applicants WHERE id = $1 AND company_id = ANY($2)`,
+    `SELECT * FROM hiring_applicants WHERE id = $1 AND company_id = ANY($2)`,
     [applicantId, companyIds]
   )
   if (!existing) return c.json({ error: 'Not found' }, 404)
@@ -831,6 +856,11 @@ app.delete('/api/hiring/applicants/:id', requireAuth, requireRole('ceo', 'coo', 
   await query(`DELETE FROM intern_records        WHERE applicant_id = $1`, [applicantId])
   await query(`DELETE FROM hiring_comments       WHERE applicant_id = $1`, [applicantId])
   await query(`DELETE FROM hiring_applicants     WHERE id = $1`,           [applicantId])
+
+  await writeMutationAuditLog(c, {
+    table: 'hiring_applicants', op: 'delete', id: applicantId, before: existing, companyId: existing.company_id,
+  })
+
   return c.json({ ok: true })
 })
 
@@ -873,6 +903,13 @@ app.post('/api/hiring/applicants/:id/reject-now', requireAuth, requireRole('ceo'
      WHERE id = $1`,
     [applicantId],
   )
+
+  await writeMutationAuditLog(c, {
+    table: 'hiring_applicants', op: 'update', id: applicantId,
+    before: { stage: applicant.stage },
+    after:  { stage: 'rejected', rejection_sent_at: new Date().toISOString() },
+    companyId: applicant.company_id,
+  })
 
   return c.json({ success: true, rejection_sent_at: new Date().toISOString() })
 })
@@ -958,6 +995,13 @@ app.post('/api/hiring/applicants/:id/schedule-interview', requireAuth, requireRo
      WHERE id = $1`,
     [applicantId, interview_at, meet_link ?? null, panelJson],
   )
+
+  await writeMutationAuditLog(c, {
+    table: 'hiring_applicants', op: 'update', id: applicantId,
+    before: { stage: applicant.stage },
+    after:  { stage: 'interview_scheduled', interview_at, interview_meet_link: meet_link ?? null },
+    companyId: applicant.company_id,
+  })
 
   // Send interview email to applicant
   const settingsRes = await getHiringSettings(String(applicant.company_id))
@@ -1046,6 +1090,13 @@ app.post('/api/hiring/applicants/:id/cancel-interview', requireAuth, requireRole
      WHERE id = $1`,
     [applicantId],
   )
+
+  await writeMutationAuditLog(c, {
+    table: 'hiring_applicants', op: 'update', id: applicantId,
+    before: { stage: applicant.stage, interview_at: applicant.interview_at },
+    after:  { stage: 'shortlisted', interview_at: null },
+    companyId: applicant.company_id,
+  })
 
   const reason = body.reason?.trim() || 'Due to scheduling constraints, we need to reschedule your interview.'
   const dt     = applicant.interview_at ? new Date(String(applicant.interview_at)) : null
@@ -1152,6 +1203,13 @@ app.post('/api/hiring/applicants/:id/generate-offer-from-template', requireAuth,
     [applicantId, `doc:${generatedIds[0]}`],
   )
 
+  await writeMutationAuditLog(c, {
+    table: 'hiring_applicants', op: 'update', id: applicantId,
+    before: { stage: applicant.stage },
+    after:  { stage: 'offer_sent', offer_letter_url: `doc:${generatedIds[0]}` },
+    companyId: applicant.company_id,
+  })
+
   return c.json({ ok: true, batch_id: batch.id })
 })
 
@@ -1222,6 +1280,13 @@ app.post('/api/hiring/applicants/:id/send-offer', requireAuth, requireRole('ceo'
     `UPDATE hiring_applicants SET stage = 'offer_sent', offer_sent_at = NOW() WHERE id = $1`,
     [applicantId],
   )
+
+  await writeMutationAuditLog(c, {
+    table: 'hiring_applicants', op: 'update', id: applicantId,
+    before: { stage: applicant.stage },
+    after:  { stage: 'offer_sent', offer_sent_at: new Date().toISOString() },
+    companyId: applicant.company_id,
+  })
 
   return c.json({ success: true, offer_sent_at: new Date().toISOString() })
 })
@@ -1361,6 +1426,13 @@ app.post('/api/hiring/applicants/:id/onboard', requireAuth, requireRole('ceo', '
     [applicantId, slackSent, discordSent, wikiPageUrl],
   )
 
+  await writeMutationAuditLog(c, {
+    table: 'hiring_applicants', op: 'update', id: applicantId,
+    before: { stage: applicant.stage },
+    after:  { stage: 'active_intern', wiki_page_url: wikiPageUrl },
+    companyId: applicant.company_id,
+  })
+
   // 7. Telegram to Bala
   const balaRes = await query(
     `SELECT telegram_chat_id FROM users WHERE role = 'ceo' AND is_active = true AND telegram_chat_id IS NOT NULL LIMIT 1`,
@@ -1438,8 +1510,13 @@ app.post('/api/hiring/roles', requireAuth, requireRole('ceo', 'coo', 'cto'), asy
      required_skills ?? [], preferred_skills ?? [],
      min_year ?? 3, slots ?? 1],
   )
+  const role = result.rows[0]
 
-  return c.json({ role: result.rows[0] }, 201)
+  await writeMutationAuditLog(c, {
+    table: 'hiring_roles', op: 'create', id: role.id, after: role, companyId: company_id,
+  })
+
+  return c.json({ role }, 201)
 })
 
 // ── PATCH /api/hiring/roles/:id ───────────────────────────────────────────
@@ -1471,7 +1548,13 @@ app.patch('/api/hiring/roles/:id', requireAuth, requireRole('ceo', 'coo', 'cto')
 
   await query(`UPDATE hiring_roles SET ${updates.join(', ')} WHERE id = $1`, params)
   const updated = await query(`SELECT * FROM hiring_roles WHERE id = $1`, [roleId])
-  return c.json({ role: updated.rows[0] })
+  const role = updated.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'hiring_roles', op: 'update', id: roleId, after: role, companyId: role.company_id,
+  })
+
+  return c.json({ role })
 })
 
 // ── GET /api/hiring/settings/:company_id ─────────────────────────────────
@@ -1519,7 +1602,13 @@ app.patch('/api/hiring/settings/:company_id', requireAuth, requireRole('ceo'), a
   )
 
   const res = await query(`SELECT * FROM hiring_settings WHERE company_id = $1`, [companyId])
-  return c.json({ settings: res.rows[0] })
+  const settings = res.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'hiring_settings', op: 'update', id: companyId, after: settings, companyId,
+  })
+
+  return c.json({ settings })
 })
 
 // ── GET /api/hiring/stats ─────────────────────────────────────────────────
@@ -1760,10 +1849,11 @@ app.post('/api/hiring/applicants/:id/resume', requireAuth, requireRole('ceo', 'c
 
   // Verify applicant belongs to user's companies
   const existing = await query(
-    `SELECT id FROM hiring_applicants WHERE id = $1 AND company_id = ANY($2)`,
+    `SELECT id, company_id FROM hiring_applicants WHERE id = $1 AND company_id = ANY($2)`,
     [applicantId, companyIds],
   )
   if (!existing.rows.length) return c.json({ error: 'Applicant not found' }, 404)
+  const applicantCompanyId = existing.rows[0].company_id
 
   const formData = await c.req.formData()
   const file = formData.get('resume') as File | null
@@ -1808,6 +1898,11 @@ app.post('/api/hiring/applicants/:id/resume', requireAuth, requireRole('ceo', 'c
     `UPDATE hiring_applicants SET resume_url = $1 WHERE id = $2`,
     [resumeUrl, applicantId],
   )
+
+  await writeMutationAuditLog(c, {
+    table: 'hiring_applicants', op: 'update', id: applicantId,
+    after: { resume_url: resumeUrl }, companyId: applicantCompanyId,
+  })
 
   return c.json({ ok: true, resume_url: resumeUrl })
 })
@@ -1919,15 +2014,21 @@ app.patch('/api/hiring/applicants/:id/tags', requireAuth, requireRole('ceo', 'co
   }
 
   const check = await query(
-    `SELECT id FROM hiring_applicants WHERE id = $1 AND company_id = ANY($2)`,
+    `SELECT id, company_id, tags FROM hiring_applicants WHERE id = $1 AND company_id = ANY($2)`,
     [applicantId, companyIds],
   )
   if (!check.rows.length) return c.json({ error: 'Applicant not found' }, 404)
+  const before = check.rows[0]
 
   await query(
     `UPDATE hiring_applicants SET tags = $1 WHERE id = $2`,
     [tags, applicantId],
   )
+
+  await writeMutationAuditLog(c, {
+    table: 'hiring_applicants', op: 'update', id: applicantId,
+    before: { tags: before.tags }, after: { tags }, companyId: before.company_id,
+  })
 
   return c.json({ ok: true })
 })
@@ -1968,7 +2069,7 @@ app.post('/api/hiring/applicants/:id/comments', requireAuth, async (c) => {
   }
 
   const check = await query(
-    `SELECT id FROM hiring_applicants WHERE id = $1 AND company_id = ANY($2)`,
+    `SELECT id, company_id FROM hiring_applicants WHERE id = $1 AND company_id = ANY($2)`,
     [applicantId, companyIds],
   )
   if (!check.rows.length) return c.json({ error: 'Applicant not found' }, 404)
@@ -1982,8 +2083,13 @@ app.post('/api/hiring/applicants/:id/comments', requireAuth, async (c) => {
      RETURNING id, user_id, user_name, body, created_at`,
     [applicantId, userId, userName, body.body.trim()],
   )
+  const comment = result.rows[0]
 
-  return c.json({ comment: result.rows[0] }, 201)
+  await writeMutationAuditLog(c, {
+    table: 'hiring_comments', op: 'create', id: comment.id, after: comment, companyId: check.rows[0].company_id,
+  })
+
+  return c.json({ comment }, 201)
 })
 
 // ── DELETE /api/hiring/comments/:id ──────────────────────────────────────────
@@ -2005,6 +2111,10 @@ app.delete('/api/hiring/comments/:id', requireAuth, async (c) => {
   }
 
   await query(`DELETE FROM hiring_comments WHERE id = $1`, [commentId])
+
+  await writeMutationAuditLog(c, {
+    table: 'hiring_comments', op: 'delete', id: commentId, before: comment, companyId: null,
+  })
 
   return c.json({ ok: true })
 })

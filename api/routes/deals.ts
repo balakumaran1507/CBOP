@@ -4,6 +4,7 @@ import { requireRole } from '../middleware/require-role'
 import { query } from '../lib/db'
 import { triggerAgent, sendViaOpenClaw } from '../lib/openclaw'
 import { notFound, validationError } from '../lib/route-utils'
+import { writeMutationAuditLog } from '../lib/audit-log'
 import '../lib/hono-vars'
 
 const app = new Hono()
@@ -66,7 +67,12 @@ app.post('/api/deals', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) 
     [name.trim(), company_id, value || null, stage, service_type || null, owner_id || null]
   )
 
-  return c.json({ deal: result.rows[0] }, 201)
+  const deal = result.rows[0]
+  await writeMutationAuditLog(c, {
+    table: 'sales_deals', op: 'create', id: deal.id, after: deal, companyId: company_id,
+  })
+
+  return c.json({ deal }, 201)
 })
 
 app.patch('/api/deals/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
@@ -74,6 +80,13 @@ app.patch('/api/deals/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), async
   const companyIds = c.get('companyIds') as string[]
   const body = await c.req.json()
   const { name, value, service_type, owner_id } = body
+
+  const existing = await query(
+    `SELECT id, company_id, name, value, service_type, owner_id FROM sales_deals WHERE id = $1 AND company_id = ANY($2)`,
+    [dealId, companyIds]
+  )
+  if (existing.rows.length === 0) return notFound(c, 'Deal')
+  const before = existing.rows[0]
 
   // updated_at set automatically by trigger trg_sales_deals_updated_at
   const result = await query(
@@ -83,11 +96,16 @@ app.patch('/api/deals/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), async
          service_type = COALESCE($3, service_type),
          owner_id     = COALESCE($4, owner_id)
      WHERE id = $5 AND company_id = ANY($6)
-     RETURNING id`,
+     RETURNING id, name, value, service_type, owner_id`,
     [name || null, value ?? null, service_type || null, owner_id || null, dealId, companyIds]
   )
 
   if (result.rows.length === 0) return notFound(c, 'Deal')
+
+  await writeMutationAuditLog(c, {
+    table: 'sales_deals', op: 'update', id: dealId, before, after: result.rows[0], companyId: before.company_id,
+  })
+
   return c.json({ success: true })
 })
 
@@ -104,7 +122,7 @@ app.patch('/api/deals/:id/stage', requireAuth, requireRole('ceo', 'coo', 'cto'),
   }
 
   const current = await query(
-    `SELECT stage, owner_id FROM sales_deals WHERE id = $1 AND company_id = ANY($2)`,
+    `SELECT stage, owner_id, company_id FROM sales_deals WHERE id = $1 AND company_id = ANY($2)`,
     [dealId, companyIds]
   )
   if (current.rows.length === 0) return notFound(c, 'Deal')
@@ -154,6 +172,13 @@ app.patch('/api/deals/:id/stage', requireAuth, requireRole('ceo', 'coo', 'cto'),
   }
 
   if (result.rows.length === 0) return notFound(c, 'Deal')
+
+  await writeMutationAuditLog(c, {
+    table: 'sales_deals', op: 'update', id: dealId,
+    before: { stage: currentStage },
+    after:  { stage, lost_reason: stage === 'closed_lost' ? lost_reason.trim() : undefined },
+    companyId: current.rows[0].company_id,
+  })
 
   const userId = c.get('userId') as string
   const stageNote = stage === 'closed_lost' ? `Moved to Closed Lost - ${lost_reason.trim()}` : `Moved to ${stage.replace('_', ' ')}`
@@ -236,7 +261,7 @@ app.post('/api/deals/:id/activities', requireAuth, requireRole('ceo', 'coo', 'ct
   if (!['call', 'email', 'meeting', 'note'].includes(type)) return validationError(c, 'Invalid type')
   if (!note?.trim()) return validationError(c, 'note required')
 
-  const { rows: [deal] } = await query(`SELECT id FROM sales_deals WHERE id = $1 AND company_id = ANY($2)`, [dealId, companyIds])
+  const { rows: [deal] } = await query(`SELECT id, company_id FROM sales_deals WHERE id = $1 AND company_id = ANY($2)`, [dealId, companyIds])
   if (!deal) return notFound(c)
 
   const result = await query(
@@ -244,7 +269,13 @@ app.post('/api/deals/:id/activities', requireAuth, requireRole('ceo', 'coo', 'ct
      RETURNING id, type, note, created_at`,
     [dealId, userId, type, note.trim()]
   )
-  return c.json({ activity: result.rows[0] }, 201)
+  const activity = result.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'sales_deal_activities', op: 'create', id: activity.id, after: activity, companyId: deal.company_id,
+  })
+
+  return c.json({ activity }, 201)
 })
 
 export default app

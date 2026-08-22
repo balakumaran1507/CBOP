@@ -6,6 +6,7 @@ import { getCampaignTransporter, isDomainVerified, isSuppressed, suppress, isAtD
 import { scanEmail } from '../lib/spam-scanner'
 import { sendViaOpenClaw } from '../lib/openclaw'
 import { getOpsAlertTelegramId } from '../lib/ops-alerts'
+import { writeMutationAuditLog } from '../lib/audit-log'
 import { randomBytes, randomUUID, createHmac } from 'node:crypto'
 import dns               from 'node:dns/promises'
 import '../lib/hono-vars'
@@ -475,6 +476,10 @@ app.post('/api/campaigns/email', requireAuth, requireRole('ceo', 'coo', 'cto'), 
     )
   }
 
+  await writeMutationAuditLog(c, {
+    table: 'marketing_campaigns', op: 'create', id: camp.id, after: camp, companyId: company_id,
+  })
+
   return c.json(camp, 201)
 })
 
@@ -588,6 +593,11 @@ app.post('/api/campaigns/email/:id/start', requireAuth, requireRole('ceo', 'coo'
      WHERE id = $1`, [id]
   )
 
+  await writeMutationAuditLog(c, {
+    table: 'marketing_campaigns', op: 'update', id,
+    before: { status: camp.status }, after: { status: 'running' }, companyId: camp.company_id,
+  })
+
   // Fire-and-forget background send
   runCampaign(id).catch(err => console.error('[email-campaigns] runCampaign error:', err))
 
@@ -600,12 +610,18 @@ app.post('/api/campaigns/email/:id/pause', requireAuth, requireRole('ceo', 'coo'
   const id = c.req.param("id") ?? ""
 
   const { rows: [camp] } = await query(
-    `SELECT id FROM marketing_campaigns WHERE id = $1 AND company_id = ANY($2) AND type = 'email'`,
+    `SELECT id, status, company_id FROM marketing_campaigns WHERE id = $1 AND company_id = ANY($2) AND type = 'email'`,
     [id, companyIds]
   )
   if (!camp) return c.json({ error: 'Not found' }, 404)
 
   await query(`UPDATE marketing_campaigns SET status = 'paused' WHERE id = $1`, [id])
+
+  await writeMutationAuditLog(c, {
+    table: 'marketing_campaigns', op: 'update', id,
+    before: { status: camp.status }, after: { status: 'paused' }, companyId: camp.company_id,
+  })
+
   return c.json({ ok: true, status: 'paused' })
 })
 
@@ -616,7 +632,7 @@ app.post('/api/campaigns/email/:id/attach-pdf', requireAuth, requireRole('ceo', 
   const id = c.req.param('id') ?? ''
 
   const { rows: [camp] } = await query(
-    `SELECT id FROM marketing_campaigns WHERE id = $1 AND company_id = ANY($2) AND type = 'email'`,
+    `SELECT id, company_id FROM marketing_campaigns WHERE id = $1 AND company_id = ANY($2) AND type = 'email'`,
     [id, companyIds]
   )
   if (!camp) return c.json({ error: 'Not found' }, 404)
@@ -634,6 +650,10 @@ app.post('/api/campaigns/email/:id/attach-pdf', requireAuth, requireRole('ceo', 
   await writeFile(path.join(pdfDir, filename), Buffer.from(await file.arrayBuffer()))
   await query(`UPDATE marketing_campaigns SET pdf_attachment_path = $2 WHERE id = $1`, [id, filename])
 
+  await writeMutationAuditLog(c, {
+    table: 'marketing_campaigns', op: 'update', id, after: { pdf_attachment_path: filename }, companyId: camp.company_id,
+  })
+
   return c.json({ ok: true, filename })
 })
 
@@ -641,10 +661,23 @@ app.post('/api/campaigns/email/:id/attach-pdf', requireAuth, requireRole('ceo', 
 app.delete('/api/campaigns/email/:id/attach-pdf', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
   const companyIds = c.get('companyIds') as string[]
   const id = c.req.param('id') ?? ''
+
+  const { rows: [camp] } = await query(
+    `SELECT id, company_id FROM marketing_campaigns WHERE id = $1 AND company_id = ANY($2)`,
+    [id, companyIds]
+  )
+
   await query(
     `UPDATE marketing_campaigns SET pdf_attachment_path = NULL WHERE id = $1 AND company_id = ANY($2)`,
     [id, companyIds]
   )
+
+  if (camp) {
+    await writeMutationAuditLog(c, {
+      table: 'marketing_campaigns', op: 'update', id, after: { pdf_attachment_path: null }, companyId: camp.company_id,
+    })
+  }
+
   return c.json({ ok: true })
 })
 
@@ -655,10 +688,22 @@ app.delete('/api/campaigns/email/:id', requireAuth, requireRole('ceo', 'coo', 'c
 
   if (running.has(id)) return c.json({ error: 'Cannot delete a running campaign - pause it first' }, 409)
 
+  const { rows: [camp] } = await query(
+    `SELECT id, company_id, name FROM marketing_campaigns WHERE id = $1 AND company_id = ANY($2) AND type = 'email'`,
+    [id, companyIds]
+  )
+
   await query(
     `DELETE FROM marketing_campaigns WHERE id = $1 AND company_id = ANY($2) AND type = 'email'`,
     [id, companyIds]
   )
+
+  if (camp) {
+    await writeMutationAuditLog(c, {
+      table: 'marketing_campaigns', op: 'delete', id, before: camp, companyId: camp.company_id,
+    })
+  }
+
   return c.json({ ok: true })
 })
 

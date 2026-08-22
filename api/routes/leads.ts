@@ -3,6 +3,7 @@ import { requireAuth } from '../middleware/require-auth'
 import { requireRole } from '../middleware/require-role'
 import { query, transaction } from '../lib/db'
 import { notFound, validationError } from '../lib/route-utils'
+import { writeMutationAuditLog } from '../lib/audit-log'
 import '../lib/hono-vars'
 
 const app = new Hono()
@@ -82,6 +83,10 @@ app.post('/api/leads', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) 
 
   const lead = result.rows[0]
 
+  await writeMutationAuditLog(c, {
+    table: 'sales_leads', op: 'create', id: lead.id, after: lead, companyId: company_id,
+  })
+
   // Trigger lead scoring in n8n (fire-and-forget)
   fireN8nWebhook('lead-updated', { lead_id: lead.id })
 
@@ -95,6 +100,14 @@ app.patch('/api/leads/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), async
   const companyIds = c.get('companyIds') as string[]
   const body       = await c.req.json()
   const { name, email, phone, org_name, source, score, badge, status, notes, owner_id, last_contact_at } = body
+
+  const existing = await query(
+    `SELECT id, company_id, name, email, phone, org_name, source, score, badge, status, notes, owner_id, last_contact_at
+     FROM sales_leads WHERE id = $1 AND company_id = ANY($2)`,
+    [leadId, companyIds]
+  )
+  if (existing.rows.length === 0) return notFound(c, 'Lead')
+  const before = existing.rows[0]
 
   const result = await query(
     `UPDATE sales_leads
@@ -121,11 +134,44 @@ app.patch('/api/leads/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), async
   )
 
   if (result.rows.length === 0) return notFound(c, 'Lead')
+  const after = result.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'sales_leads', op: 'update', id: leadId, before, after, companyId: before.company_id,
+  })
 
   // Trigger lead scoring in n8n (fire-and-forget)
   fireN8nWebhook('lead-updated', { lead_id: leadId })
 
-  return c.json({ success: true, lead: result.rows[0] })
+  return c.json({ success: true, lead: after })
+})
+
+// ── DELETE /api/leads/:id ─────────────────────────────────────────────────────
+
+app.delete('/api/leads/:id', requireAuth, requireRole('ceo', 'coo', 'cto'), async (c) => {
+  const leadId     = c.req.param('id') as string
+  const companyIds = c.get('companyIds') as string[]
+
+  const existing = await query(
+    `SELECT id, company_id, name, email, phone, org_name, source, score, badge, status, notes, owner_id
+     FROM sales_leads WHERE id = $1 AND company_id = ANY($2)`,
+    [leadId, companyIds]
+  )
+  if (existing.rows.length === 0) return notFound(c, 'Lead')
+  const before = existing.rows[0]
+
+  const dealsCheck = await query(`SELECT COUNT(*) AS cnt FROM sales_deals WHERE lead_id = $1`, [leadId])
+  if (parseInt(dealsCheck.rows[0].cnt, 10) > 0) {
+    return c.json({ error: 'Cannot delete a lead that has been converted to a deal.' }, 409)
+  }
+
+  await query(`DELETE FROM sales_leads WHERE id = $1`, [leadId])
+
+  await writeMutationAuditLog(c, {
+    table: 'sales_leads', op: 'delete', id: leadId, before, companyId: before.company_id,
+  })
+
+  return c.json({ ok: true })
 })
 
 // ── POST /api/leads/:id/convert-to-deal ───────────────────────────────────────
@@ -145,6 +191,7 @@ app.post('/api/leads/:id/convert-to-deal', requireAuth, requireRole('ceo', 'coo'
   let deal: { id: string; name: string; stage: string }
   let clientId: string
   let isNewClient = false
+  let dealCompanyId: string
 
   try {
     const txResult = await transaction(async (client) => {
@@ -203,16 +250,24 @@ app.post('/api/leads/:id/convert-to-deal', requireAuth, requireRole('ceo', 'coo'
       // Mark lead converted
       await client.query(`UPDATE sales_leads SET status = 'converted' WHERE id = $1`, [leadId])
 
-      return { deal: dealResult.rows[0], clientId: txClientId!, isNewClient: txIsNewClient }
+      return { deal: dealResult.rows[0], clientId: txClientId!, isNewClient: txIsNewClient, companyId: lead.company_id as string }
     })
     deal = txResult.deal
     clientId = txResult.clientId
     isNewClient = txResult.isNewClient
+    dealCompanyId = txResult.companyId
   } catch (err) {
     if (err instanceof NotFoundError) return c.json({ error: 'Lead not found' }, 404)
     if (err instanceof AlreadyConvertedError) return c.json({ error: 'Lead already converted' }, 409)
     throw err
   }
+
+  await writeMutationAuditLog(c, {
+    table: 'sales_deals', op: 'create', id: deal.id, after: deal, companyId: dealCompanyId,
+  })
+  await writeMutationAuditLog(c, {
+    table: 'sales_leads', op: 'update', id: leadId, after: { status: 'converted' }, companyId: dealCompanyId,
+  })
 
   // Fire n8n webhooks (fire-and-forget)
   fireN8nWebhook('lead-updated', { lead_id: leadId })

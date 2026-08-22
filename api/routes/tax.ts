@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { requireAuth } from '../middleware/require-auth'
 import { requireRole } from '../middleware/require-role'
 import { query } from '../lib/db'
+import { writeMutationAuditLog } from '../lib/audit-log'
 import '../lib/hono-vars'
 
 const app = new Hono()
@@ -63,7 +64,11 @@ app.post('/api/tax/filings', requireAuth, requireRole('ceo'), async (c) => {
     `INSERT INTO tax_filings (company_id, filing_type, period, due_date, notes) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
     [company_id, filing_type, period, due_date, notes ?? null]
   )
-  return c.json({ filing: result.rows[0] }, 201)
+  const filing = result.rows[0]
+  await writeMutationAuditLog(c, {
+    table: 'tax_filings', op: 'create', id: filing.id, after: filing, companyId: company_id,
+  })
+  return c.json({ filing }, 201)
 })
 
 app.patch('/api/tax/filings/:id', requireAuth, requireRole('ceo'), async (c) => {
@@ -72,15 +77,20 @@ app.patch('/api/tax/filings/:id', requireAuth, requireRole('ceo'), async (c) => 
   const body = await c.req.json()
   const { status } = body as { status: 'pending' | 'filed' }
 
-  const existing = await query(`SELECT company_id FROM tax_filings WHERE id = $1`, [id])
+  const existing = await query(`SELECT * FROM tax_filings WHERE id = $1`, [id])
   if (existing.rows.length === 0) return c.json({ error: 'Not found' }, 404)
   if (!companyIds.includes(existing.rows[0].company_id)) return c.json({ error: 'Forbidden' }, 403)
+  const before = existing.rows[0]
 
   const result = await query(
     `UPDATE tax_filings SET status = $1, filed_at = CASE WHEN $1 = 'filed' THEN NOW() ELSE NULL END WHERE id = $2 RETURNING *`,
     [status, id]
   )
-  return c.json({ filing: result.rows[0] })
+  const after = result.rows[0]
+  await writeMutationAuditLog(c, {
+    table: 'tax_filings', op: 'update', id, before, after, companyId: before.company_id,
+  })
+  return c.json({ filing: after })
 })
 
 // ── Tax regime estimator - pure calculator, no DB, published FY2025-26 slabs ──

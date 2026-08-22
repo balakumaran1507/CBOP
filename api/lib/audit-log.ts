@@ -270,3 +270,32 @@ export function writeAuthzDenial(
     },
   })
 }
+
+/**
+ * Row-mutation audit event for ordinary CRUD routes that don't have a named
+ * AUDIT_ACTIONS constant. action becomes '<table>.<create|update|delete>' —
+ * dot-namespaced like every other action in this file, generated instead of
+ * hand-enumerated so adding audit coverage to a new table never requires
+ * touching AUDIT_ACTIONS. Named constants above are unaffected and still used
+ * for auth/admin/export/mcp events.
+ */
+export async function writeMutationAuditLog(
+  c: Context,
+  entry: {
+    table: string
+    op: 'create' | 'update' | 'delete'
+    id: string | null | undefined
+    before?: unknown
+    after?: unknown
+    companyId?: string | null
+  }
+): Promise<void> {
+  await writeAuditLogForRequest(c, {
+    action:       `${entry.table}.${entry.op}`,
+    resourceType: entry.table,
+    resourceId:   entry.id,
+    companyId:    entry.companyId,
+    before:       entry.before,
+    after:        entry.after,
+  })
+}

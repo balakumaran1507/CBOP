@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { requireAuth } from '../middleware/require-auth'
 import { query } from '../lib/db'
+import { writeMutationAuditLog } from '../lib/audit-log'
 import '../lib/hono-vars'
 
 const app = new Hono()
@@ -57,8 +58,13 @@ app.post('/api/sessions', requireAuth, async (c) => {
       scheduled_at || null,
     ]
   )
+  const session = result.rows[0]
 
-  return c.json({ session: result.rows[0] }, 201)
+  await writeMutationAuditLog(c, {
+    table: 'ops_work_sessions', op: 'create', id: session.id, after: session, companyId: company_id,
+  })
+
+  return c.json({ session }, 201)
 })
 
 // ── PATCH /api/sessions/:id ───────────────────────────────────────────────────
@@ -73,6 +79,18 @@ app.patch('/api/sessions/:id', requireAuth, async (c) => {
   if (completed_at && !output?.trim()) {
     return c.json({ error: 'output is required when completing a session' }, 400)
   }
+
+  const existing = await query(
+    `SELECT s.id, s.company_id, s.goal, s.output, s.attendees, s.scheduled_at, s.completed_at
+     FROM ops_work_sessions s
+     WHERE s.id = $1
+       AND (s.company_id = ANY($2) OR EXISTS (
+         SELECT 1 FROM ops_projects p WHERE p.id = s.project_id AND p.work_type = 'internal'
+       ))`,
+    [sessionId, companyIds]
+  )
+  if (existing.rows.length === 0) return c.json({ error: 'Session not found' }, 404)
+  const before = existing.rows[0]
 
   const result = await query(
     `UPDATE ops_work_sessions s
@@ -98,7 +116,13 @@ app.patch('/api/sessions/:id', requireAuth, async (c) => {
   )
 
   if (result.rows.length === 0) return c.json({ error: 'Session not found' }, 404)
-  return c.json({ success: true, session: result.rows[0] })
+  const session = result.rows[0]
+
+  await writeMutationAuditLog(c, {
+    table: 'ops_work_sessions', op: 'update', id: sessionId, before, after: session, companyId: before.company_id,
+  })
+
+  return c.json({ success: true, session })
 })
 
 export default app
